@@ -505,5 +505,19 @@ const readyRigEnglish = {
   "设备凭证已失效": "Device credentials have expired",
   "无法连接云端服务": "Cannot connect to the cloud service",
   "云端请求失败（%d）": "Cloud request failed (%d)",
-  "公网控制台仅供查看。Agent 可通过 REST 或 MCP 调用已授权工具。": "This public console is read-only. Agents can call enabled tools through REST or MCP."
+  "公网控制台仅供查看。Agent 可通过 REST 或 MCP 调用已授权工具。": "This public console is read-only. Agents can call enabled tools through REST or MCP.",
+  "Chrome 连接": "Chrome connection",
+  "连接说明与诊断": "Setup and diagnostics",
+  "，开启远程调试。": ", then enable remote debugging.",
+  "需要授权时，点击「授权调试入口」，选择 DevToolsActivePort 文件。": "If requested, choose “Authorize debugging file” and select DevToolsActivePort.",
+  "首次使用浏览器工具时，在 Chrome 中允许连接。": "Allow the connection in Chrome when you first use a browser tool.",
+  "在 Chrome 中开启远程调试后，点击重新检测。": "Enable remote debugging in Chrome, then choose “Detect again.”",
+  "请授权读取 Chrome 调试文件。": "Allow access to Chrome's debugging file.",
+  "正在连接 Chrome…": "Connecting to Chrome…",
+  "浏览器工具已关闭。": "Browser tools are off.",
+  "连接暂不可用，请展开诊断查看原因。": "Connection unavailable. Expand diagnostics for the reason.",
+  "连接失败，请重新检测或展开诊断。": "Connection failed. Detect again or check diagnostics.",
+  "控制已暂停，恢复后才能使用浏览器。": "Resume control to use browser tools.",
+  "已接入 {0} 个浏览器工具。首次使用时，请在 Chrome 中允许连接。": "{0} browser tools available. Allow the connection in Chrome on first use.",
+  "请展开诊断查看连接状态。": "Expand diagnostics to view the connection status."
 };

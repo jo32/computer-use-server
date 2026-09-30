@@ -108,9 +108,12 @@ function renderChrome(){
  const c=state.data?.chrome||{state:'waiting',message:t("等待检测 Chrome")};
  const names={waiting:t("等待 Chrome"),permission_required:t("需要授权"),connecting:t("正在连接"),ready:t("已接入"),disabled:t("已关闭"),unavailable:t("需要配置"),error:t("连接失败")};
  const status=state.data?.paused?t("已暂停"):!state.data?.enabled.browser?t("已关闭"):names[c.state]||c.state;
+ const summaries={waiting:'在 Chrome 中开启远程调试后，点击重新检测。',permission_required:'请授权读取 Chrome 调试文件。',connecting:'正在连接 Chrome…',disabled:'浏览器工具已关闭。',unavailable:'连接暂不可用，请展开诊断查看原因。',error:'连接失败，请重新检测或展开诊断。'};
+ const message=state.data?.paused?t('控制已暂停，恢复后才能使用浏览器。'):!state.data?.enabled.browser?t('浏览器工具已关闭。'):c.state==='ready'?t('已接入 {0} 个浏览器工具。首次使用时，请在 Chrome 中允许连接。',{0:c.tools||0}):t(summaries[c.state]||'请展开诊断查看连接状态。');
  for(const el of document.querySelectorAll('[data-chrome-authorize]'))el.classList.toggle('hidden',PUBLIC_VIEW||new URLSearchParams(location.search).get('shell')!=='darwin'||c.state!=='permission_required');
  for(const el of document.querySelectorAll('[data-chrome-status]'))el.textContent=status;
- for(const el of document.querySelectorAll('[data-chrome-message]'))el.textContent=t(c.message)+(c.tools?t(" · {0} 个工具", {0: c.tools}):'');
+ for(const el of document.querySelectorAll('[data-chrome-message]'))el.textContent=message;
+ for(const el of document.querySelectorAll('[data-chrome-diagnostic]'))el.textContent=t(c.message);
  for(const el of document.querySelectorAll('[data-chrome-indicator]'))el.classList.toggle('ready',c.state==='ready'&&!state.data?.paused&&state.data?.enabled.browser);
 }
 async function loadFrames(force=false){
