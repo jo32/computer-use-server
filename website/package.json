@@ -1,0 +1,27 @@
+{
+  "name": "readyrig-website",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "dev": "npm run sync:brand && vite --host 127.0.0.1",
+    "build": "npm run sync:brand && npm run check && vite build",
+    "check": "tsc --noEmit",
+    "preview": "vite preview --host 127.0.0.1",
+    "sync:brand": "node scripts/sync-brand.mjs"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "sharp": "^0.35.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  }
+}
