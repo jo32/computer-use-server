@@ -3,4 +3,4 @@ package buildinfo
 
 var Version = "dev"
 var UpdateFeed = ""
-var ReleaseRepo = "jo32/computer-use-server"
+var ReleaseRepo = "jo32/readyrig"

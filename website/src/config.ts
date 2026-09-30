@@ -1,4 +1,4 @@
-const repository = import.meta.env.VITE_REPOSITORY_URL || 'https://github.com/jo32/computer-use-server'
+const repository = import.meta.env.VITE_REPOSITORY_URL || 'https://github.com/jo32/readyrig'
 
 export const site = {
   repository,

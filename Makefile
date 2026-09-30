@@ -1,5 +1,5 @@
 VERSION ?= dev
-RELEASE_REPO ?= jo32/computer-use-server
+RELEASE_REPO ?= jo32/readyrig
 UPDATE_FEED ?=
 LDFLAGS = -X computer-use-server/internal/buildinfo.Version=$(VERSION) -X computer-use-server/internal/buildinfo.ReleaseRepo=$(RELEASE_REPO) -X computer-use-server/internal/buildinfo.UpdateFeed=$(UPDATE_FEED)
 

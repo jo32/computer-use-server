@@ -3,7 +3,7 @@
 set -eu
 : "${VERSION:?Set VERSION to a release version, for example 0.5.0}"
 printf '%s' "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$' || { printf '%s\n' 'VERSION must be a stable x.y.z release' >&2; exit 1; }
-repo=${RELEASE_REPO:-jo32/computer-use-server}
+repo=${RELEASE_REPO:-jo32/readyrig}
 printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || exit 1
 version=${VERSION#v}
 out="dist/releases/$version"

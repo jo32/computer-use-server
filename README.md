@@ -8,7 +8,7 @@ Go 实现的本地能力服务与 Wails 桌面控制台。让远端 Agent 通过
 
 参考 Magpie 的生命周期：正式版本启动 5 秒后检查 GitHub Releases，此后每 6 小时检查一次；发现新版本就后台下载，在菜单栏和「连接 → 软件更新」显示进度、更新说明与「重启并更新」。正常退出也会安装已下载版本。下载期间服务继续运行，只有主动重启或退出才结束当前调用。
 
-默认发布仓库为私有的 [jo32/computer-use-server](https://github.com/jo32/computer-use-server)。本机已执行 `gh auth login` 即可读取私有 Release（兼容 macOS Finder 启动时的 Homebrew 路径），也可设置 `RELAY_UPDATE_TOKEN`，使用该仓库 Contents 只读权限的令牌。凭据只发送到 GitHub API，不写入包、日志或控制台，也不转发给下载重定向地址。
+默认发布仓库为公开的 [jo32/readyrig](https://github.com/jo32/readyrig)。本机已执行 `gh auth login` 即可读取私有 Release（兼容 macOS Finder 启动时的 Homebrew 路径），也可设置 `RELAY_UPDATE_TOKEN`，使用该仓库 Contents 只读权限的令牌。凭据只发送到 GitHub API，不写入包、日志或控制台，也不转发给下载重定向地址。
 
 - 下载匹配当前系统、架构和桌面/浏览器构建的资产，验证大小和 SHA-256；macOS `.app` 还验证代码签名完整性、签名团队和 bundle ID。签名版本不会降级为 ad-hoc 签名；当前 ad-hoc 包依赖认证的 GitHub 发布源与校验值确认来源，尚未做 Developer ID 公证。
 - 下载失败最多重试 3 次；重复检查合并，已有完整下载不会因网络失败丢失。替换失败回滚旧文件；多个进程不能同时更新同一安装。
