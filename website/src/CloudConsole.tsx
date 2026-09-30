@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AppIcon, Icon } from './components/Icon'
+import { CopyButton } from './components/CopyButton'
 import type { IconName } from './components/Icon'
+import { publicConnectionPrompt } from './connection-prompt'
 import { LanguageSelect, useI18n } from './i18n'
 import type { Locale } from './locale'
 import './cloud-console.css'
@@ -141,6 +143,7 @@ function DeviceCard({ device, refresh }: { device: Device; refresh: () => Promis
     pending = commands.some((c) => c.status === 'queued' || c.status === 'executing'),
     disabled = busy || pending || !device.online
   const active = ['installing', 'starting', 'ready', 'stopping'].includes(tunnel.state || '')
+  const prompt = tunnel.state === 'ready' && tunnel.gateway ? publicConnectionPrompt(tunnel.gateway, tunnel.mode, t) : ''
   return (
     <article className="cloud-device">
       <div className="cloud-device-heading">
@@ -183,11 +186,12 @@ function DeviceCard({ device, refresh }: { device: Device; refresh: () => Promis
           <p className="cloud-sharing-copy">
             {t(
               tunnel.state === 'ready'
-                ? '复制地址，将已开放的工具接给你的 Agent。'
+                ? '复制 Prompt，粘贴给 Agent 即可连接。'
                 : '开启后，云端 Agent 就能使用这台电脑的工具。',
             )}
           </p>
           <div className="cloud-actions">
+            {prompt && <CopyButton text={prompt} label="复制 Prompt" />}
             {!active && (
               <select
                 aria-label={t('公网链接类型')}
@@ -200,7 +204,7 @@ function DeviceCard({ device, refresh }: { device: Device; refresh: () => Promis
               </select>
             )}
             <button
-              className="button button-primary"
+              className={`button ${prompt ? 'button-secondary' : 'button-primary'}`}
               disabled={disabled}
               onClick={() => void send(active ? 'tunnel.stop' : 'tunnel.start', active ? {} : { mode })}
             >
@@ -208,20 +212,29 @@ function DeviceCard({ device, refresh }: { device: Device; refresh: () => Promis
             </button>
           </div>
           {tunnel.state === 'ready' && tunnel.gateway && (
-            <div className="cloud-address">
-              <label>{t('Agent 地址')}</label>
-              <code>{tunnel.gateway}</code>
-              <button
-                className="button button-secondary"
-                onClick={() => {
-                  void navigator.clipboard
-                    .writeText(tunnel.gateway!)
-                    .catch(() => setError(t('复制失败，请手动复制地址')))
-                }}
-              >
-                {t('复制地址')}
-              </button>
-            </div>
+            <>
+              <div className="cloud-address">
+                <label>{t('Agent 地址')}</label>
+                <code>{tunnel.gateway}</code>
+                <button
+                  className="button button-secondary"
+                  onClick={() => {
+                    void navigator.clipboard
+                      .writeText(tunnel.gateway!)
+                      .catch(() => setError(t('复制失败，请手动复制地址')))
+                  }}
+                >
+                  {t('复制地址')}
+                </button>
+              </div>
+              <details className="cloud-prompt-preview">
+                <summary>
+                  {t('查看 Prompt')}
+                  <Icon name="chevron" width="14" height="14" />
+                </summary>
+                <textarea aria-label={t('连接 Prompt')} value={prompt} readOnly spellCheck={false} />
+              </details>
+            </>
           )}
           {tunnel.state === 'error' && tunnel.message && <p className="cloud-error">{t(tunnel.message)}</p>}
         </section>

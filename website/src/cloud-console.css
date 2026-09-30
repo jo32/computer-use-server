@@ -217,6 +217,25 @@
   align-items: center;
   flex-wrap: wrap;
 }
+.cloud-actions .copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--fg);
+  color: var(--bg);
+  border: 1px solid var(--fg);
+  white-space: nowrap;
+}
+.cloud-actions .copy-button:hover {
+  background: var(--fg);
+  opacity: 0.85;
+}
 .cloud-actions select,
 .cloud-rename input {
   min-height: 34px;
@@ -249,6 +268,37 @@
   line-height: 1.7;
   overflow-wrap: anywhere;
   min-width: 0;
+}
+.cloud-prompt-preview {
+  margin-top: 14px;
+}
+.cloud-prompt-preview summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+}
+.cloud-prompt-preview summary::-webkit-details-marker {
+  display: none;
+}
+.cloud-prompt-preview[open] summary svg {
+  transform: rotate(90deg);
+}
+.cloud-prompt-preview textarea {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--fg-2);
+  font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
 }
 .cloud-capabilities {
   display: grid;
