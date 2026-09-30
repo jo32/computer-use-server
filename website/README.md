@@ -1,10 +1,10 @@
-# ReadyRig 官网
+# ReadyRig Website
 
-与 ReadyRig 桌面控制台保持相同的灰白 / 深色主题、分段导航、细边框和列表样式。React + TypeScript + Vite 项目；官网与 `/console` 设备控制台一起部署到 Cloudflare Workers，账号、心跳和命令使用 D1。部署与 Google 登录配置见 [cloud/README.md](../cloud/README.md)。
+The React, TypeScript, and Vite website shares ReadyRig's light/dark themes, segmented navigation, borders, and list styles. It is deployed with the `/console` device console on Cloudflare Workers; D1 stores accounts, heartbeats, and commands. See the [cloud guide](../cloud/README.md) for deployment and Google sign-in setup, and the [changelog](../CHANGELOG.md) for project history.
 
-## 本地开发
+## Local development
 
-需要 Node.js 22.12+（推荐当前 LTS）。
+Requires Node.js 22.12+; the current LTS release is recommended.
 
 ```sh
 cd website
@@ -12,82 +12,89 @@ npm ci
 npm run dev
 ```
 
-打开 http://127.0.0.1:5173。主区域包含可交互的 App 预览，所有预览数据为示例，不连接本机服务，也不执行真实工具调用。
+Open [the local development site](http://127.0.0.1:5173). The main page includes an interactive app preview with example data. It does not connect to a local service or execute real tool calls.
 
 ```sh
-npm run check     # TypeScript 检查
-npm run build     # 同步图标、检查类型、构建到 dist/
-npm run preview   # 预览发布构建：http://127.0.0.1:4173
+npm run check     # Check TypeScript types.
+npm run build     # Sync icons, check types, and build into dist/.
+npm run preview   # Preview the production build at http://127.0.0.1:4173.
 ```
 
-## 正式域名与迁移
+## Production hosting
 
-官网：https://readyrig.getmegaportal.com 。控制台：https://readyrig.getmegaportal.com/console 。正式域名绑定到 `readyrig-cloud` Worker，Cloudflare 提供静态官网、Google 登录、设备管理 API 与 D1。
+The [website](https://readyrig.getmegaportal.com/) and [device console](https://readyrig.getmegaportal.com/console) use the `readyrig-cloud` Worker. Cloudflare serves static assets, Google sign-in, device management APIs, and D1 storage.
 
-原 Vercel 项目 `readyrig` 已下线并停止 Git 自动部署；原自定义域名的 Vercel 绑定已移除。保留原项目和部署记录供恢复对照，`vercel.json` 仅是旧配置，不用于现有发布。使用 `cd ../cloud && npm run deploy` 发布官网与控制台。
+Deploy both from the cloud directory:
 
-原 `https://readyrig-cloud.megaportal.workers.dev` 网页访问会跳转到正式域名；该地址上的设备接口继续接受已绑定 app 的心跳和回执。
+```sh
+cd ../cloud
+npm run deploy
+```
 
-## 下载与链接
+The former Vercel project `readyrig` is paused, automatic Git deployments are disabled, and its custom domain binding has been removed. The project and deployment history remain available for recovery; `vercel.json` is a legacy configuration unused by current deployments. See the [cloud migration and recovery notes](../cloud/README.md#production-domain-and-recovery).
 
-复制 `.env.example` 为 `.env.local`，配置网站构建使用的变量：
+Web requests to the former `https://readyrig-cloud.megaportal.workers.dev` address redirect to the production domain. Its device endpoints continue accepting heartbeats and receipts from already bound apps.
 
-| 变量 | 用途 |
+## Downloads and links
+
+Copy `.env.example` to `.env.local` and configure the build variables:
+
+| Variable | Purpose |
 | --- | --- |
-| `VITE_DOWNLOAD_MAC_ARM64` | Apple Silicon 的公开安装包地址 |
-| `VITE_DOWNLOAD_MAC_AMD64` | Intel 的公开安装包地址 |
-| `VITE_REPOSITORY_URL` | 仓库地址 |
-| `VITE_RELEASES_URL` | 版本发布页面 |
-| `VITE_DOCS_URL` | 接入文档 |
-| `VITE_RELEASES_REQUIRE_ACCESS` | 默认为 `false`；仅私有版本页面设为 `true` |
+| `VITE_DOWNLOAD_MAC_ARM64` | Public Apple Silicon download URL |
+| `VITE_DOWNLOAD_MAC_AMD64` | Public Intel download URL |
+| `VITE_REPOSITORY_URL` | Repository URL |
+| `VITE_RELEASES_URL` | Releases page |
+| `VITE_DOCS_URL` | Connection documentation |
+| `VITE_RELEASES_REQUIRE_ACCESS` | Defaults to `false`; use `true` only for private release pages |
 
-仓库已公开。默认下载地址对应 GitHub Releases 最新正式版本的 Apple Silicon 与 Intel 安装包；也可通过变量覆盖为其他公开安装包地址。`VITE_*` 都会打包进网页，只填写公开 URL，不能放 token 等凭据。修改后需要重新构建。
+The repository is public. Default downloads point to the latest stable GitHub Release packages for Apple Silicon and Intel; variables can override them with other public package URLs. All `VITE_*` values are embedded in the website. Use public URLs only and never include tokens or other credentials. Rebuild after changing them.
 
-## 图标同步
+## Shared icon assets
 
-官网使用 App 的同一张源图：`../internal/brand/assets/readyrig-app-icon.png`。
+The website uses the app's source image: `../internal/brand/assets/readyrig-app-icon.png`.
 
-- `npm run dev` 与 `npm run build` 会自动生成优化后的官网图标、favicon、Apple Touch Icon 与社交分享图。
-- 开发服务器会监听 App 图标源文件，变更时自动同步并刷新页面。
-- 单独更新资源可执行 `npm run sync:brand`。
-- `public/brand/` 应一并提交。若单独复制 `website/`，构建会继续使用已打包资源。
+- `npm run dev` and `npm run build` generate optimized website icons, favicons, an Apple Touch Icon, and social sharing images.
+- The development server watches the source icon and refreshes the page when it changes.
+- Run `npm run sync:brand` to update assets independently.
+- Commit `public/brand/` with the source changes. If `website/` is copied alone, the build uses the bundled assets.
 
-后续更换 App 图标无需修改 React 组件。线上官网需要提交生成后的资源并重新部署；本地文件变更不会直接修改线上网站。
+Replacing the app icon requires no React component changes. Commit generated assets and redeploy to update the production website; local edits do not update the deployed site.
 
-产品名称统一为 **ReadyRig**，官网包名为 `readyrig-website`。外观偏好使用 `readyrig-site-theme`，并读取改名前的 `readrig-site-theme` 作为回退，保留已有用户的外观设置。
+The product is named **ReadyRig**, and the package is `readyrig-website`. Theme preferences use `readyrig-site-theme`, with the former `readrig-site-theme` key as a fallback to preserve existing preferences.
 
-## 内容与外观
+## Content and appearance
 
-- `src/App.tsx`：介绍、功能、上手步骤、FAQ、下载和页脚。
-- `src/components/UseCases.tsx`：本机资料、开发环境、浏览器与桌面、临时分享四个交互场景。
-- `src/components/RemoteAccess.tsx`：云端到本机的连接示意、平台交互演示入口和分享权限边界。
-- `src/components/AppPreview.tsx`：交互预览与 Prompt / MCP / REST 接入示例。
-- `src/config.ts`：链接与下载配置。
-- `src/styles.css`：App 配色、布局、响应式与深浅色外观。
-- `index.html`：标题、搜索 / 分享元数据、图标和首次外观设置。
+- `src/App.tsx`: introduction, features, getting started, FAQ, downloads, and footer.
+- `src/components/UseCases.tsx`: interactive examples for local files, development environments, browser/desktop operations, and temporary sharing.
+- `src/components/RemoteAccess.tsx`: cloud-to-local connection diagram, platform demo links, and sharing permission boundaries.
+- `src/components/AppPreview.tsx`: interactive preview and prompt, MCP, and REST examples.
+- `src/config.ts`: link and download configuration.
+- `src/styles.css`: app colors, layout, responsive behavior, and light/dark appearance.
+- `index.html`: title, search/social metadata, icons, and initial appearance selection.
 
-外观首次跟随系统，可手动切换并保存。所有示例连接地址明确使用占位符，实际地址应从 App 的「连接」页面复制。发布到正式域名时，建议把 `og:image` 和 `twitter:image` 改成该域名下的完整 URL。
+Appearance initially follows the system and can be changed and saved manually. Example connection URLs use placeholders; copy real URLs from the app's Connection page. For production, use absolute URLs on the production domain for `og:image` and `twitter:image`.
 
-GitHub 仓库链接使用 [GitHub 官方品牌资源](https://brand.github.com/foundations/logo)中的 Invertocat。`public/brand/github-invertocat-black.svg` 与 `github-invertocat-white.svg` 直接来自[官方素材包](https://brand.github.com/GitHub_Logos.zip)，保持原始 SVG，分别用于浅色与深色外观。
+Repository links use the Invertocat from [GitHub's official brand resources](https://brand.github.com/foundations/logo). `public/brand/github-invertocat-black.svg` and `github-invertocat-white.svg` come directly from the [official asset archive](https://brand.github.com/GitHub_Logos.zip), preserving the original SVGs for light and dark appearance.
 
-## 场景与接入说明
+## Scenarios and agent connection guidance
 
-官网首先介绍「让线上 Agent 使用本机工具」和「将已开放的工具临时分享给可信任的人」，再展示控制台与工具清单。场景里的任务与步骤均为示例，并不在网页上执行。
+The website introduces using local tools from online agents and temporarily sharing enabled tools with trusted people before showing the console and tool list. Scenario tasks and steps are examples that do not execute on the page.
 
-产品介绍依据官方来源：
+Product descriptions are based on official sources:
 
-- [Cue](https://cue.im/)：个人 Agent 有自己的身份、电脑与工具。
-- [Gemini Spark](https://blog.google/innovation-and-ai/products/gemini-app/next-evolution-gemini-app/)：[自定义 MCP 接入文档](https://support.google.com/gemini/answer/17209137)列出了 OAuth / DCR 流程。
-- [WorkBuddy 云端 Agent](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/CloudAgent)：独立云端沙箱运行任务；[网页版入口](https://www.codebuddy.cn/work/)。
+- [Cue](https://cue.im/): personal agents with their own identity, computer, and tools.
+- [Gemini Spark](https://blog.google/innovation-and-ai/products/gemini-app/next-evolution-gemini-app/): the [custom MCP connection documentation](https://support.google.com/gemini/answer/17209137) describes OAuth and DCR flows.
+- [WorkBuddy cloud agents](https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/CloudAgent): tasks run in independent cloud sandboxes; see the [web application](https://www.codebuddy.cn/work/).
 
-接入说明按产品作者的实测反馈编写：Cue 和 WorkBuddy 网页版直接粘贴 App 生成的 Prompt；Gemini Spark 需要配置远程 MCP。`src/components/PlatformDemo.tsx` 提供三个平台的接入、执行、结果演示，使用示例数据，不连接外部服务，也不是第三方产品真实界面的录屏。
+Connection guidance follows the product author's hands-on feedback: Cue and WorkBuddy's web application accept the prompt generated by ReadyRig, while Gemini Spark requires remote MCP configuration. `src/components/PlatformDemo.tsx` illustrates connection, execution, and results for all three platforms using example data. It does not connect to external services or show recordings of the real third-party interfaces.
 
-分享说明应始终与实际权限一致：完整链接就是访问凭据，持有者可调用已启用工具并查看日志 / 截图；多个接入者共用同一套权限，没有按用户隔离。终端使用当前用户权限，浏览器与桌面可触及已登录应用；文件工具的项目目录限制不是系统沙箱。执行记录保存在本机不意味着工具结果不传到云端。关闭公网入口不会自动取消已运行的命令。
+Sharing descriptions must match actual permissions. The full connection URL is a credential: holders can call enabled tools and view logs/screenshots. All connected clients share the same permissions without per-user isolation. Terminal commands run as the current user; browser and desktop tools may reach signed-in applications. File-tool project restrictions do not sandbox the host. Keeping execution records locally does not prevent tool results from reaching cloud agents. Stopping public sharing does not automatically cancel already running commands.
 
-## 多语言
+## Languages
 
-官网、交互演示与网页设备控制台支持简体中文和英文。右上角可选择「跟随系统 / 简体中文 / English」，手动选择会保存在当前浏览器，刷新或跨页面访问后仍然生效。首次打开会按浏览器语言顺序选择支持的语言，没有匹配时使用英文。也可用 `?lang=en` 或 `?lang=zh-CN` 打开指定语言。
+The website, interactive demos, and cloud device console support English and Simplified Chinese. Choose Follow system, Simplified Chinese, or English in the top-right corner. Manual selection is saved in the browser across refreshes and pages. The initial choice follows supported languages in browser preference order, falling back to English. Use `?lang=en` or `?lang=zh-CN` to request a language explicitly.
 
-语言识别与插值位于 `src/locale.ts`，React 状态与页面元数据位于 `src/i18n.tsx`，英文文案集中在 `src/locales/en.json`。中文原文作为翻译键；示例数据随语言切换，实际用户内容保持原样。新增界面文案需要加入词典。
+Language detection and interpolation live in `src/locale.ts`; React state and page metadata live in `src/i18n.tsx`. English strings are in `src/locales/en.json`, using the original Chinese strings as translation keys. Example data follows language selection; user content is preserved. Add new interface strings to the dictionary.
 
-运行 `npm test` 验证语言识别、偏好保存、占位参数、文案覆盖和 App 接入 Prompt。App 对应词典位于 `../internal/server/assets/locales/en.js`；原生菜单与系统对话框的词典位于 `../internal/i18n/en.json`，测试会检查两端文案一致。
+Run `npm test` to verify detection, saved preferences, placeholders, translation coverage, and app connection prompts. The app dictionary is `../internal/server/assets/locales/en.js`; native menu/dialog translations are in `../internal/i18n/en.json`. Tests check consistency across them.

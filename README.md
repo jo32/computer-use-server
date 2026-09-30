@@ -1,68 +1,94 @@
 # ReadyRig — Local Agent Adapter
 
-Go 实现的本地能力服务与 Wails 桌面控制台。让远端 Agent 通过 REST 或 MCP 操作工作区文件、运行命令、截取并操作 macOS 桌面，并在本机查看完整执行日志。
+ReadyRig is a local tool service written in Go with a Wails desktop console. It lets remote agents use REST or MCP to work with local files, run commands, and capture and control the macOS desktop, while keeping execution logs available on your computer. It also bridges the official Chrome DevTools MCP tools into the same interface.
 
-## Google 登录与云端设备控制
-
-「连接 → 云端账号」通过系统浏览器登录 Google，核对验证码后将电脑绑定到账号。官网与设备控制台由 Cloudflare Workers 提供，D1 保存账号、设备心跳和命令。app 每 15 秒上报状态并领取网页下发的隧道开关、能力开关和暂停/恢复命令；公网关闭时心跳仍会继续。60 秒没有心跳显示离线，命令 5 分钟未领取会过期，执行结果返回网页。
-
-控制台：<https://readyrig.getmegaportal.com/console>。官方部署已配置并验证 Google 登录；部署和验证步骤见 [cloud/README.md](cloud/README.md)。可用 `--cloud-url` / `READYRIG_CLOUD_URL` 连接自己的部署。网页只能管理当前 Google 账号绑定的电脑；解绑撤销设备凭证。固定隧道凭证、项目目录、Full Access 与系统权限仍在本机配置。
+[Website](https://readyrig.getmegaportal.com/) · [Cloud console](https://readyrig.getmegaportal.com/console) · [Releases](https://github.com/jo32/readyrig/releases) · [Changelog](CHANGELOG.md)
 
 ![ReadyRig control console](docs/readyrig-console.png)
 
-官网、桌面 App、浏览器控制台与网页设备控制台支持 **简体中文 / English**。右上角可选择语言或跟随系统，并保存偏好。App 的原生菜单、授权窗口、连接 Prompt 与状态提示也会同步切换；原生 App 的语言设置保存在私有数据目录的 `language.json`，重启后保留。
+The website, desktop app, local browser console, and cloud device console support English and Simplified Chinese. Choose a language or follow the system setting in the top-right corner. Native menus, authorization dialogs, connection prompts, and status messages follow the same preference. The desktop app saves its language in `language.json` in the private data directory.
 
-## 0.5 自动更新
+## Getting started
 
-参考 Magpie 的生命周期：正式版本启动 5 秒后检查 GitHub Releases，此后每 6 小时检查一次；发现新版本就后台下载，在菜单栏和「连接 → 软件更新」显示进度、更新说明与「重启并更新」。正常退出也会安装已下载版本。下载期间服务继续运行，只有主动重启或退出才结束当前调用。
-
-默认发布仓库为公开的 [jo32/readyrig](https://github.com/jo32/readyrig)。本机已执行 `gh auth login` 即可读取私有 Release（兼容 macOS Finder 启动时的 Homebrew 路径），也可设置 `READYRIG_UPDATE_TOKEN`，使用该仓库 Contents 只读权限的令牌。凭据只发送到 GitHub API，不写入包、日志或控制台，也不转发给下载重定向地址。
-
-- 下载匹配当前系统、架构和桌面/浏览器构建的资产，验证大小和 SHA-256；macOS `.app` 还验证代码签名完整性、签名团队和 bundle ID。签名版本不会降级为 ad-hoc 签名；当前 ad-hoc 包依赖认证的 GitHub 发布源与校验值确认来源，尚未做 Developer ID 公证。
-- 下载失败最多重试 3 次；重复检查合并，已有完整下载不会因网络失败丢失。替换失败回滚旧文件；多个进程不能同时更新同一安装。
-- `dev`、源码描述版本不自更新；安装目录只读或 Homebrew 管理时给出手动更新提示。不在后台请求管理员权限。
-- 仅本地管理接口提供 `GET /api/update`、`POST /api/update/check`、`POST /api/update/restart`；Agent 接口无法访问。
-- 重启后恢复原启动参数，权限开关按原启动参数初始化，Agent 随机访问路径重新生成。浏览器模式需要使用终端新输出的控制台链接重新登录。
+Building from source requires Go 1.25+. The macOS desktop build also requires Xcode Command Line Tools. The core application needs no Node.js, npm, or frontend bundler; the optional Chrome MCP integration requires Node.js.
 
 ```sh
-bin/readyrig version                 # 当前版本
-bin/readyrig update                  # 终端检查、下载并安装；运行中的同一安装请使用控制台
-bin/readyrig --no-update              # 本次关闭；也可 READYRIG_NO_UPDATE=1
-make app VERSION=0.5.0             # 默认不带 VERSION 的构建标记为 dev
-make release VERSION=0.5.0         # dist/releases/0.5.0/：安装包、裸二进制、SHA256SUMS
+make app
+open dist/ReadyRig.app
 ```
 
-发布流程在 `.github/workflows/release.yml`：推送 `vX.Y.Z` 标签后，运行测试、构建 macOS Intel/Apple Silicon 桌面包以及 macOS/Linux/Windows 双架构浏览器版，最后发布到 GitHub Releases。本地 `make release` 只构建，不上传；可用 `SIGN_IDENTITY` 指定 macOS 签名身份。将来更换签名团队需要手动安装一次。
+To run directly with a workspace:
 
-`--update-repo owner/repo` / `READYRIG_UPDATE_REPO` 可切换仓库；`--update-feed URL` / `READYRIG_UPDATE_FEED` 可覆盖为 Magpie 兼容的 `{version, notes, url, assets: {filename: {url, size, sha256}}}` feed。自定义 feed 只允许 HTTPS，回环地址允许 HTTP 供本地测试。`python3 scripts/test-update.py` 会在临时目录验证真实二进制从 0.4.0 升至 0.5.0 并重启，保留日志和工作区。
+```sh
+go run ./cmd/adapter --workspace /absolute/path/to/workspace
+```
 
-## 0.3 Magpie 界面
+To use the browser console with the same Go backend:
 
-按 Magpie 的原始主题与组件重做：顶部居中分段导航、48px 工具行、相连统计单元、灰色底面、整块圆角列表，以及日志行内展开的输入/结果双栏。移除侧栏、宣传标题和独立详情面板，深浅色均采用 Magpie 的主题值。保留 ReadyRig 名称与工具能力。
+```sh
+make cli
+bin/readyrig-web web --workspace /absolute/path/to/workspace
+```
 
-## 0.2 执行查看与回放
+Open the `Dashboard` URL printed in the terminal. Its startup key is exchanged for an HttpOnly, SameSite=Strict cookie and removed from the address bar after login. The agent API uses a separate random access path and needs no Authorization header.
 
-- **实时命令输出**：长命令执行期间每秒保存有变化的 stdout/stderr，控制台自动更新；不消耗远端 `write_stdin` 的未读输出。
-- **单次取消**：详情中的「停止这次调用」仅取消所选任务及其进程组；保留已经产生的输出，最终状态为 `cancelled`。暂停仍然停止所有任务。
-- **可读详情**：终端输出、文件内容、目录表格与搜索结果分别呈现，可复制完整结果；原始 JSON 可展开查看。窄窗口将行内详情变成上下排列，不会把历史记录放进执行表单。
-- **动作回放**：将 `frame_id` 关联到同一会话中保存的参考截图，显示点击位置或拖拽起终点；可切换参考画面与执行之后，拖动进度并调整播放速度。未保存前后画面时明确显示缺失，不推测画面。
-- **按需加载**：列表只获取摘要，选中后才加载完整内容。长输出不会随着每次列表刷新重复传输；详情保留展开状态与阅读位置。
-- **能力隔离**：关闭某一能力只取消这一类别的在途调用，其他类别继续执行。
+Default locations and addresses:
 
-仅本地管理界面新增 `GET /api/calls/{id}` 和 `POST /api/calls/{id}/cancel`。远端 Agent 无法访问管理路由；如需终止自己的命令，仍使用 `write_stdin`。
+- Workspace: `~/agent_workspace`.
+- Data: `~/.local/share/readyrig/` for new installations, containing SQLite logs, screenshots, and application data. Existing installations reuse their previous directory; see [Compatibility](#compatibility).
+- Agent API: `http://127.0.0.1:7332/<random-8-character-path>`. Copy the actual URL from the startup output or Connection page.
+- Browser console: `http://127.0.0.1:7331`, in `web` mode only.
 
-## 0.4 Chrome DevTools MCP
+The initial data directory must be outside the initial workspace. Adding a project that contains the data directory, or enabling Full Access, expands what file tools can access.
 
-本地安装 Google Chrome 且已开启远程调试时，ReadyRig 会自动启动并桥接**官方 Chrome DevTools MCP**，将其工具加入现有 REST、MCP、OpenAPI 和工具库。主程序与桥接器使用 Go；官方 MCP 子进程依赖 Node.js。
+## Using the console
 
-1. Chrome 144+ 中打开 `chrome://inspect/#remote-debugging`，启用远程调试并保持 Chrome 运行。
-2. 安装 Node.js（20.19+、22.12+ 或更新版本，包含 npx）。ReadyRig 优先使用 PATH 中已安装的 `chrome-devtools-mcp`，否则使用 `npx --yes chrome-devtools-mcp@1.10.1`。首次接入需要联网下载并缓存官方组件；Finder 启动也会查找 Homebrew、Volta、mise 和 nvm 的常用路径。
-3. 打开 ReadyRig 的「连接」或「工具库」，确认 Chrome 状态为「已接入」。首次工具调用触发 Chrome 的连接授权时，在 Chrome 中允许。
-4. Agent 使用本次运行的 ReadyRig MCP 地址，重新获取 `tools/list` 即可使用 `chrome_list_pages`、`chrome_take_snapshot`、`chrome_click` 等工具。按上游 schema 提供参数，例如页面工具需要 `pageId`。本版网关没有工具变更推送；缓存工具清单的客户端需刷新或重新连接。
+- **Activity** shows live status, filters by session, category, and result, searches arguments and errors, and provides request/response details, pagination, and NDJSON export. Command output updates during execution without consuming unread `write_stdin` output. Individual calls can be cancelled while retaining their output.
+- **Desktop replay** displays saved screenshots and action markers frame by frame or as playback, with a timeline and speed controls. It loads screenshots and actions from up to the latest 5,000 desktop calls. Playback displays history without executing actions again; missing frames are identified explicitly.
+- **Tools** shows registered tools, JSON Schema, and example arguments. Test calls execute real operations and are logged. Detailed results load on demand, with readable terminal output, files, directory tables, and search results, plus expandable raw JSON.
+- **Connection** provides the current agent URL and MCP configuration, system permission status, capability switches, sharing, and software updates.
+- **Pause control** cancels active calls and terminal process groups and rejects new tool calls. Disabling one capability cancels only calls in that category.
 
-默认自动检测稳定版 Chrome 的 `DevToolsActivePort`，也检查本机 `127.0.0.1:9222`。每 5 秒检测一次；调试入口失效或关闭后撤下工具，恢复后重新注册。只连接已存在的 Chrome，不替用户启动浏览器或开启调试。状态「已接入」表示 MCP 工具已注册，首次浏览器操作仍可能等待 Chrome 授权。
+File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations must be enabled for each run locally, or explicitly through `--allow-shell` and `--allow-computer`. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
 
-使用自定义调试端口、Chrome 数据目录或已安装的 MCP 程序：
+On macOS, left-click the menu bar computer icon to open the quick panel; clicking outside dismisses it. Right-click for the native menu to open the full window, pause or resume, check for updates, or quit. Closing the main window keeps the service running; quitting stops it. The icon animates during tool execution, indicates pause, and respects Reduce Motion.
+
+## Projects and Full Access
+
+Add local folders on the **Projects** page. You can browse folders, rename projects, choose a default, and remove access. The project list and default are saved in `projects.json` in the data directory. `--workspace` supplies the initial folder only when this list is first created. Removing a project leaves its files and already running terminal commands intact.
+
+- Agents call `list_projects {}` to obtain project IDs, absolute paths, the default project, and `full_access` status. This query also works while paused.
+- `read_file`, `write_file`, `list_directory`, `search_files`, and `exec_command` accept an optional `project` ID. Relative paths use the default project unless another is specified. Absolute paths inside added projects are supported; when a project is explicitly selected, the path must belong to it.
+- **Full Access** permits file paths and terminal working directories outside added projects, subject to the current system account's permissions. It lasts only for the current run and is disabled after restart unless started with `--full-access`.
+- Full Access does not enable terminal, desktop, or Chrome capabilities, grant root privileges, or bypass macOS privacy permissions. The page links to Full Disk Access settings; restart after granting access to ReadyRig or the terminal app that launches it.
+- Only the local console can modify project access or Full Access. Agents can query them. Active file operations finish before access is revoked. Logs include the actual file path or command `cwd` to identify the project used.
+
+```json
+{"project":"<id-from-list_projects>","path":"README.md"}
+```
+
+With Full Access enabled, file tools can use `{"path":"/Users/you/Documents/notes.txt"}` and terminal tools can use `{"command":"pwd","cwd":"/Users/you/Downloads"}`.
+
+## Google sign-in and cloud device control
+
+Under **Connection → Cloud account**, sign in with Google in the system browser, verify the code, and bind your computer to the account. The website and device console run on Cloudflare Workers; D1 stores accounts, device heartbeats, and commands.
+
+Open the [cloud console](https://readyrig.getmegaportal.com/console) with the same Google account to manage bound computers. The app reports status and retrieves tunnel, capability, and pause/resume commands every 15 seconds, including when public sharing is off. Devices appear offline after 60 seconds without a heartbeat. Commands expire if not retrieved within five minutes, and execution results return to the web console.
+
+The official deployment has Google sign-in configured and verified. See the [cloud deployment guide](cloud/README.md) for setup and verification, or use `--cloud-url` / `READYRIG_CLOUD_URL` with your own deployment. The web console manages only computers bound to the signed-in account. Unbinding revokes device credentials. Fixed tunnel credentials, project folders, Full Access, and operating system permissions remain locally configured.
+
+## Chrome DevTools MCP
+
+ReadyRig starts and bridges the **official Chrome DevTools MCP** subprocess, adding its tools to REST, MCP, OpenAPI, and the Tools page. The application and bridge are written in Go; the official MCP subprocess requires Node.js.
+
+1. In Chrome 144+, open `chrome://inspect/#remote-debugging`, enable remote debugging, and keep Chrome running.
+2. Install Node.js 20.19+, 22.12+, or a later supported version with npx. ReadyRig prefers `chrome-devtools-mcp` on PATH, otherwise it runs `npx --yes chrome-devtools-mcp@1.10.1`. Initial setup downloads and caches the component. Apps launched from Finder also search common Homebrew, Volta, mise, and nvm locations.
+3. Check Chrome status in Connection or Tools. Allow Chrome's connection request when the first tool call prompts you.
+4. Refresh `tools/list` through the current ReadyRig MCP URL to use tools such as `chrome_list_pages`, `chrome_take_snapshot`, and `chrome_click`. Follow the upstream schemas, including `pageId` where required. Clients that cache tools must refresh or reconnect; the gateway does not push tool-list changes.
+
+ReadyRig checks stable Chrome's `DevToolsActivePort` and local `127.0.0.1:9222` every five seconds. It attaches to an existing Chrome instance without launching a browser or enabling debugging. Tool definitions load independently of the browser connection: while Chrome is unavailable or its debugging file requires authorization, tools remain listed as waiting for a connection, and calls return the corresponding explanation. ReadyRig switches to the detected debugging endpoint when it becomes available. A ready status can still require Chrome's approval on the first operation.
+
+Custom debugging port, profile directory, or MCP executable:
 
 ```sh
 bin/readyrig-web web --chrome-browser-url http://127.0.0.1:9223
@@ -70,112 +96,87 @@ bin/readyrig-web web --chrome-user-data-dir /absolute/path/to/chrome-profile
 bin/readyrig-web web --chrome-mcp-command /absolute/path/to/chrome-devtools-mcp
 ```
 
-仅接受本机 HTTP 调试地址，不跟随重定向或接受远程 WebSocket。数据目录检测只读取调试入口文件，不读取浏览历史或账户资料。如果 macOS 拒绝访问该文件，界面会显示原因；可以使用已配置的本机调试端口。`--no-chrome` 可在启动时关闭自动接入；本地「Chrome 浏览器」开关可以临时停用，远端无法修改。
+Only local HTTP debugging URLs are accepted, without redirects or remote WebSocket endpoints. Profile discovery reads the debugging endpoint file rather than browsing history or account data. Use `--no-chrome` to disable startup detection, or the Chrome browser switch to disable it for the current run. Remote agents cannot change this setting.
 
-所有浏览器调用记录参数、耗时、结果和失败状态，可在「浏览器」类别筛选。原始 MCP 的 schema、annotations、文本、图片及 structuredContent 保留；浏览器截图在调用详情中显示并随 JSON 日志保存，暂不进入桌面回放与桌面快照计数。调用按顺序执行，超时上限 2 分钟；暂停或取消会断开当前 MCP 子进程，下次恢复后重新接入，不会关闭用户 Chrome，也不会重试已经发出的动作。已完成的浏览器操作不能撤销。
+Browser calls log arguments, duration, results, and failures and can be filtered by the browser category. The bridge preserves upstream schemas, annotations, text, images, and `structuredContent`. Browser screenshots appear in call details and JSON logs, but are excluded from desktop replay and desktop snapshot counts. Calls execute serially with a two-minute limit. Pause or cancellation disconnects the MCP subprocess; it reconnects after control resumes without closing your Chrome or retrying previously issued actions. Completed browser actions cannot be undone.
 
-Chrome MCP 可以访问其连接的浏览器资料，并可能通过上传/保存工具访问当前用户可访问的本机文件；它不受 ReadyRig 文件工具的工作区边界限制。默认关闭官方使用统计与 CrUX 数据查询。桥接复用的是官方 MCP 的工具与协议；其他客户端已经启动的 stdio 进程无法被 ReadyRig 直接共享，ReadyRig 管理自己的 MCP 子进程。
+Chrome MCP can access the attached browser profile and may use upload/save tools to access local files available to your account. ReadyRig's file-tool project boundaries do not constrain those tools. Upstream usage statistics and CrUX queries are disabled by default. ReadyRig manages its own MCP subprocess; it cannot share another client's existing stdio process.
 
-参考：[官方现有 Chrome 连接说明](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/advanced-usage.md#connecting-to-a-running-chrome-instance)。
+See the [upstream guide to connecting to a running Chrome instance](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/advanced-usage.md#connecting-to-a-running-chrome-instance).
 
-## 启动
+### Debugging file authorization on macOS
 
-需要 Go 1.25+。macOS 桌面构建需要 Xcode Command Line Tools；核心程序无需 Node、npm 或前端打包器；可选 Chrome MCP 功能需要 Node.js。
+Chrome 144+ remote debugging exposes a WebSocket endpoint; a `404` from `/json/version` is expected in this mode. ReadyRig reads the local URL from `DevToolsActivePort` and passes it directly to the official MCP subprocess, which does not need to read the profile again.
+
+If macOS blocks the file, click **Authorize debugging file** in the desktop app and select `DevToolsActivePort` inside the Chrome folder. ReadyRig then detects the endpoint again. Cancelling the dialog leaves permissions unchanged. If access is still denied, check ReadyRig's data access under **System Settings → Privacy & Security**; in browser mode, grant access to the terminal that starts ReadyRig. You must still approve the first browser connection in Chrome. Only the local desktop window can open this system dialog.
+
+## Remote access and sharing
+
+Under **Connection → Connect your agent**, select **Public → Temporary link** and start sharing to obtain a temporary HTTPS URL through **Cloudflare Quick Tunnels**, without a Cloudflare account or domain. ReadyRig uses an installed `cloudflared` first, including common macOS Homebrew paths. Otherwise it downloads the official GitHub release, verifies SHA-256, and stores it in the private data directory under `cloudflared/`. It leaves system installations unchanged and does not read existing named-tunnel configuration or login credentials for temporary sharing.
+
+**Copy for your agent** generates a connection prompt for the selected local or public URL. Paste it into an agent with terminal or HTTP tools. It first calls `help` and `list_projects` to check the connection and authorized folders, then follows the supplied task or waits for one. Copying reads the current URL again; no prompt is provided before public sharing is ready.
+
+Connection details and diagnostics are collapsed by default. Once sharing connects, you can copy the agent URL and MCP configuration, or open the read-only web console:
+
+- Agent: `https://example.trycloudflare.com/aSsxba11`
+- MCP: `https://example.trycloudflare.com/aSsxba11/mcp`
+- Web console: `https://example.trycloudflare.com/aSsxba11/app/`
+
+The full URL, including its eight-character access path, is a credential. Anyone holding it can use enabled tools and view logs and screenshots. The public console is read-only. It cannot change permissions, projects, Full Access, pause state, updates, or tunnel settings. REST/MCP retain the configured capability and folder restrictions. The tunnel forwards only the agent port, leaving the local management port private.
+
+URLs become available only after connection succeeds; failures show an error and recent diagnostics. You can cancel connection, stop sharing, or reconnect. Sharing is off by default and does not resume automatically after restart. Stopping sharing or quitting stops `cloudflared` and clears the public URL. Temporary sharing receives a new domain whenever it starts, and its random path changes whenever ReadyRig restarts. Fixed sharing retains its domain and a separate access path, so restarting sharing restores the same full URL. Stopping fixed sharing immediately rejects new requests using that path.
+
+To enable temporary sharing explicitly from the command line:
 
 ```sh
-make app
-open dist/ReadyRig.app
+bin/readyrig-web web --share
+# Optionally select an installed cloudflared executable.
+bin/readyrig-web web --share --cloudflared /opt/homebrew/bin/cloudflared
 ```
 
-也可以直接运行并指定工作区：
+### Fixed links
 
-```sh
-go run ./cmd/adapter --workspace /absolute/path/to/workspace
-```
+Fixed links use a remotely managed Cloudflare named tunnel:
 
-浏览器控制台（保留相同 Go 后端）：
+1. Create a `cloudflared` tunnel in your Cloudflare account and copy its Tunnel Token.
+2. Add a published application route for your domain, such as `readyrig.example.com`, targeting ReadyRig's **agent API**: service type `HTTP`, address `127.0.0.1:7332` by default. Use the current gateway port if changed; the console displays the service address.
+3. Under **Public → Fixed link**, enter the domain and token, save, and start sharing. A full HTTPS URL or bare domain is accepted; paths, IP addresses, and temporary `trycloudflare` domains are rejected.
 
-```sh
-make cli
-bin/readyrig-web web --workspace /absolute/path/to/workspace
-```
+Fixed links require `cloudflared` 2025.4.0+ with `--token-file` support. The token and fixed access path are saved in a private configuration file readable and writable only by the current user. The UI reports whether a token is saved without returning it. Startup passes the token through a temporary `0600` file, removes it on exit, and excludes it from command arguments and diagnostics. The public console cannot read or modify this configuration. ReadyRig verifies that the fixed domain reaches the current instance before exposing links. Saving configuration does not start sharing, and restarting does not enable it automatically.
 
-用终端输出的 `Dashboard` 链接打开浏览器。链接中的一次启动密钥在登录后换成 HttpOnly / SameSite=Strict cookie，地址栏会移除密钥。Agent 接口使用独立的随机路径授权，无需 Authorization 请求头。
+See [Cloudflare named tunnel setup](https://developers.cloudflare.com/tunnel/get-started/) and the [token-file parameter](https://developers.cloudflare.com/tunnel/reference/run-parameters/#token-file). Configure your account, domain, and DNS routes in Cloudflare.
 
-默认目录：
+Quick Tunnels provide temporary sharing without a stable domain or availability guarantee. They support up to 200 concurrent requests and do not support SSE. The public console refreshes every five seconds; MCP uses JSON HTTP responses. See the [official Quick Tunnels documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
 
-- 工作区：`~/agent_workspace`
-- 数据：新安装使用 `~/.local/share/readyrig/`，包括 SQLite 日志、截图和应用数据；已有安装继续使用原数据目录（见下方兼容说明）
-- Agent 接口：`http://127.0.0.1:7332/<8位随机路径>`，实际地址在启动输出和连接界面中显示
-- 浏览器控制台：`http://127.0.0.1:7331`（仅 `web` 模式）
+## Agent tools and APIs
 
-初始数据目录必须位于初始工作区之外。主动添加包含数据目录的项目或开启 Full Access 后，文件工具的访问范围也会扩大。
+REST, MCP, OpenAPI, and the console share one tool registry.
 
-## Projects 与 Full Access
-
-在 **Projects** 页面添加多个本机目录，可浏览文件夹、重命名、设为默认、移除授权。项目列表和默认选择保存在数据目录的 `projects.json`，重启后保留。`--workspace` 仅在首次创建项目列表时提供初始目录。移除项目不会删除文件，也不会终止已经启动的终端命令。
-
-- Agent 通过 `list_projects {}` 获取项目 ID、绝对路径、默认项目和 `full_access` 状态；暂停时也可查询。
-- `read_file`、`write_file`、`list_directory`、`search_files` 和 `exec_command` 接受可选的 `project` ID。相对路径默认使用当前项目；也支持已添加项目内的绝对路径。显式指定项目时，绝对路径同样需属于该项目。
-- **Full Access** 放开文件路径与终端工作目录限制，可使用当前系统账户可读写的其他目录。仅本次运行有效；重启默认关闭，也可用 `--full-access` 显式启动。
-- Full Access 不改变终端、桌面、Chrome 的独立开关，不获取 root 身份，不绕过 macOS 隐私权限。页面提供「完全磁盘访问权限」系统设置入口，授权 ReadyRig（或启动它的终端应用）后需重启。
-- 项目授权与 Full Access 只能在本地控制台修改；Agent 只能查询。运行中的文件操作会完成后再撤销授权。日志结果包含实际文件路径或命令 `cwd`，便于区分项目。
-
-```json
-{"project":"从 list_projects 获取的 ID","path":"README.md"}
-```
-
-开启 Full Access 后，文件工具可直接使用 `{"path":"/Users/you/Documents/notes.txt"}`，终端工具可使用 `{"command":"pwd","cwd":"/Users/you/Downloads"}`。
-
-## 使用界面
-
-- **活动日志**：实时状态、按会话/类别/结果筛选、搜索参数或错误、查看请求与响应、分页和 NDJSON 导出。
-- **桌面回放**：查看截图时间线、逐帧或自动播放。只展示历史图像，不重新执行操作；最多加载最近 5000 条桌面调用中的截图与动作。
-- **工具库**：查看真实注册的工具、JSON Schema、默认示例；测试调用会产生实际副作用并写入日志。
-- **连接与权限**：复制本次运行的 Agent 地址与 MCP 配置、查看系统授权状态、启用或关闭能力。
-- **暂停控制**：取消当前调用和终端进程组，拒绝新的工具调用。菜单栏也有暂停/恢复入口。关闭窗口保留托盘；退出菜单终止服务。
-
-默认开启文件工具与 Chrome 自动检测（只有发现调试入口后才开放浏览器工具）。终端和桌面操作每次启动都需要在本地开启，也可通过 `--allow-shell`、`--allow-computer` 显式开启。远端接口不提供恢复暂停或修改权限的 API。
-
-## 工具清单
-
-同一注册表供 REST、MCP、OpenAPI 和 UI 使用。
-
-| 工具 | 用途 | 执行方式 |
+| Tool | Purpose | Execution |
 | --- | --- | --- |
-| `help` | 查询当前开放的工具、完整定义与状态，支持按名称查看 | 可并发，暂停时可用 |
-| `read_file` | UTF-8 / Base64 读取、按行范围读取 | 可并发 |
-| `list_projects` | 项目目录、默认项目与 Full Access 状态，只读 | 可并发 |
-| `write_file` | 原子写入，创建父目录 | 串行 |
-| `list_directory` | 目录和文件元数据 | 可并发 |
-| `search_files` | 文本查找，返回行号 | 可并发 |
-| `exec_command` | 启动命令、指定 cwd/env/超时、提前返回进程 ID | 可并发 |
-| `write_stdin` | 输入、轮询、关闭 stdin、终止进程 | 可并发 |
-| `computer_screenshot` | 主屏幕 JPEG，最长边 1280 | 串行 |
-| `computer_action` | 鼠标、键盘、滚动、拖拽，默认截取执行后画面 | 串行 |
-| `chrome_*` | 动态发现的官方 Chrome DevTools MCP 工具 | 串行 |
+| `help` | Current tool definitions and status, optionally by name | Concurrent; available while paused |
+| `read_file` | UTF-8/Base64 reads and line ranges | Concurrent |
+| `list_projects` | Read-only project folders, default, and Full Access status | Concurrent; available while paused |
+| `write_file` | Atomic writes and parent directory creation | Serial |
+| `list_directory` | Directory entries and file metadata | Concurrent |
+| `search_files` | Text search with line numbers | Concurrent |
+| `exec_command` | Commands with cwd, environment, timeout, and early session return | Concurrent |
+| `write_stdin` | Input, polling, stdin closure, and process termination | Concurrent |
+| `computer_screenshot` | Main-screen JPEG, longest edge 1,280 pixels | Serial |
+| `computer_action` | Mouse, keyboard, scroll, and drag; captures the result by default | Serial |
+| `chrome_*` | Dynamically discovered official Chrome DevTools MCP tools | Serial |
 
-### 工具帮助
+### Tool help
 
-Agent 可直接调用 `help`，无需另行读取 REST 文档：
+Call `help` with `{}` to obtain currently allowed tools, including names, descriptions, categories, complete `inputSchema`, upstream `outputSchema` and annotations, mutation and concurrency flags, and `enabled` / `available` status. Definitions come from the live registry.
 
-```json
-{}
-```
+Use `{"name":"exec_command"}` to inspect one tool even when disabled, or `{"include_disabled":true}` to include all registered tools and unavailable reasons (`capability_disabled` / `control_paused`). `available` reflects ReadyRig's capability and pause checks; operating system permissions and Chrome connection approval may still be required. Tools removed from the registry are absent from the list.
 
-默认返回当前允许调用的工具，包含名称、用途、分类、完整 `inputSchema`、上游提供的 `outputSchema` / annotations、是否修改数据、并发标志，以及 `enabled`、`available` 状态。定义直接读取当前注册表，Chrome 接入或断开会同步反映，不使用固定清单。
-
-```json
-{"name":"exec_command"}
-```
-
-指定名称可查看单个工具，即使它尚未启用。使用 `{"include_disabled":true}` 可列出全部已注册工具及不可用原因（`capability_disabled` / `control_paused`）。`available` 表示 ReadyRig 当前允许调用，不代表系统权限或 Chrome 授权已经满足；已断开的 Chrome 工具不再注册，因此不会出现在清单中。
-
-`help` 只读、始终启用，全局暂停时仍可查询，其调用也记录日志。REST 地址为 `POST /api/v1/tools/help`，MCP 调用名称为 `help`，本地工具库也可直接试用。
+`help` is read-only, always enabled, works while paused, and is logged. Call it through `POST /api/v1/tools/help`, the MCP tool named `help`, or the local Tools page.
 
 ### REST
 
-下列 `aSsxba11` 是示例，请使用连接界面复制的实际地址：
+The path `aSsxba11` below is an example. Copy the actual URL from Connection:
 
 ```sh
 export READYRIG_URL="http://127.0.0.1:7332/aSsxba11"
@@ -188,7 +189,7 @@ curl "$READYRIG_URL/api/v1/fs/read" \
   -d '{"path":"README.md","start_line":1,"end_line":20}'
 ```
 
-以下路径均相对于包含随机前缀的 `READYRIG_URL`。所有工具都可用 `POST /api/v1/tools/{name}` 调用，也提供方案中的别名：
+All tools accept `POST /api/v1/tools/{name}`. These aliases and the OpenAPI endpoint are relative to `READYRIG_URL`, including its access path:
 
 ```text
 POST /api/v1/bash/exec
@@ -202,11 +203,11 @@ POST /api/v1/computer/action
 GET  /api/v1/openapi.json
 ```
 
-结果统一为 `{call_id, status, result, error}`。工具执行失败返回 HTTP 422；本地暂停或能力关闭返回 423。命令非零退出保留 stdout/stderr/exit_code，并标记失败。缺失、错误或上次运行的随机前缀返回 404，浏览器跨域来源 403，速率超过每分钟 240 请求返回 429。
+Responses use `{call_id, status, result, error}`. Tool execution failures return HTTP 422; paused control or disabled capabilities return 423. Nonzero command exits retain stdout, stderr, and `exit_code` and are marked as failures. Missing, incorrect, or previous-run access paths return 404; cross-origin browser requests return 403; exceeding 240 requests per minute returns 429.
 
 ### MCP
 
-本机与一次性链接每次启动使用系统安全随机数生成新的 8 位大小写字母/数字路径，Agent 路由均位于该前缀下。固定链接使用单独保存在本机的访问路径，仅在固定分享运行时接受请求。无需 Bearer Token，不再创建或读取 `agent-token`；旧文件保留但不参与授权。本机与一次性链接重启后旧地址失效，需要重新复制配置。控制台可复制完整配置（下面的路径仅为示例）：
+Local and temporary URLs get a new cryptographically random eight-character alphanumeric path at startup. All agent routes sit beneath it. Fixed links use a separately persisted path accepted only while fixed sharing is active. No Bearer Token is needed. Legacy `agent-token` files are retained but unused. Copy a new local or temporary configuration after restart:
 
 ```json
 {
@@ -218,14 +219,14 @@ GET  /api/v1/openapi.json
 }
 ```
 
-使用 HTTP POST JSON-RPC；`initialize` 返回 `Mcp-Session-Id`，后续请求需携带该头。支持 `initialize`、`ping`、`tools/list`、`tools/call` 和初始化通知。支持 2025-06-18 协议，兼容 2025-03-26 的单请求 JSON 传输；不实现旧式 SSE、JSON-RPC 批处理、MCP stdio 或服务端主动请求。MCP 图片作为独立 image content 返回，而不是塞入文本。MCP 客户端断线行为见下方限制。
+MCP uses HTTP POST JSON-RPC. `initialize` returns `Mcp-Session-Id`, which subsequent requests must include. Supported operations are `initialize`, `ping`, `tools/list`, `tools/call`, and initialization notifications. The gateway supports protocol 2025-06-18 and single-request JSON transport compatibility with 2025-03-26. Legacy SSE, JSON-RPC batches, MCP stdio, and server-initiated requests are unsupported. Images are returned as separate MCP image content. See [Security boundaries and limitations](#security-boundaries-and-limitations) for disconnect behavior.
 
-### Computer Use 坐标
+### Computer-use coordinates
 
-1. 在同一会话中调用 `computer_screenshot`。
-2. 从返回值获得 `frame_id` 和 `image_size`。
-3. 在返回图像的像素坐标系中选择坐标，并传回 `frame_id`。
-4. 适配器映射到 macOS 的显示坐标点，处理 Retina 比例。
+1. Call `computer_screenshot` in the same session.
+2. Read `frame_id` and `image_size` from the result.
+3. Choose coordinates in the returned image's pixel space and send the `frame_id` with the action.
+4. ReadyRig maps image pixels to macOS display points, including Retina scaling.
 
 ```json
 {
@@ -236,105 +237,92 @@ GET  /api/v1/openapi.json
 }
 ```
 
-支持 `mouse_move`、`left_click`、`right_click`、`middle_click`、`double_click`、`drag`、`scroll`、`type`、`key`。拖拽额外提供 `to: [x,y]`；滚动提供 `scroll_delta: [horizontal,vertical]`；组合键使用 `keys: ["cmd","c"]`。图像坐标必须在边界内；frame 必须属于当前会话且在五分钟内。屏幕布局改变后应重新截图。动作后等待 200ms 再观察。
+Supported actions: `mouse_move`, `left_click`, `right_click`, `middle_click`, `double_click`, `drag`, `scroll`, `type`, and `key`. Drag uses `to: [x,y]`; scroll uses `scroll_delta: [horizontal,vertical]`; key combinations use `keys: ["cmd","c"]`. Coordinates must be within the image. Frames must belong to the current session and be less than five minutes old. Take a new screenshot after display layout changes. Post-action capture waits 200 ms before observing.
 
-## 安全边界与实际限制
+## Automatic updates
 
-- **文件边界是真实的目录边界**：默认用 Go `os.Root` 将文件操作限制在所选项目内，允许项目内的绝对路径，拒绝父级穿越与指向外部的符号链接。Full Access 开启后按当前系统账户权限访问其他目录。
-- **终端不是系统沙箱**：在宿主机上用当前用户执行 `/bin/sh`。cwd 默认必须位于已添加项目内（Full Access 可放开），但命令仍能访问用户可访问的其他路径、网络和设备。暂未提供 Docker 执行后端、PTY 或 Windows shell 适配。默认关闭终端。
-- 命令默认超时 60 秒，上限 600 秒；输出每个流最多 1MiB；进程组会在取消时停止，但刻意脱离进程组的程序需要 OS 沙箱才能约束。
-- **macOS 原生桌面**：需要屏幕录制及辅助功能权限。使用系统截图工具和 CoreGraphics 输入事件；当前只操作主屏幕、使用真实鼠标，暂无 AX 元素树、后台窗口输入、OCR、浏览器扩展或多显示器选择。Windows/Linux 的原生 Driver 会明确返回“不支持”。
-- 鼠标位于屏幕角落时输入被拒绝；拖拽会持续检查取消/角落条件并释放按键。全局暂停不是撤销已完成的动作。
-- Agent 网关与管理界面是两个独立入口。随机路径使用常量时间比较；拒绝 REST/MCP 的浏览器 Origin；公网只读控制台允许同源 GET/HEAD。本机控制台防跨站请求及 DNS rebinding。可用 `--allow-ip 127.0.0.1/32,::1/128` 限制直连 peer；不信任客户端提供的转发 IP。
-- 随机访问路径仅保存在内存中，数据目录以 0700 创建；日志会移除字段名中的 token/password/secret、本次随机访问路径及控制台密钥。**不保证识别自由文本或图像中的所有秘密**；日志、截图应视作敏感本地数据。
-- 日志默认持久保留，无自动清理/配额。SQLite 记录每次调用开始和结果；服务重启把未完成调用标为 interrupted。长命令运行时持续保存变化的输出，完成时无需客户端轮询也会更新最终日志。截图单独存储，不把 Base64 填入日志列表。
-- 持有本次随机地址的 Agent 共享同一授权主体；会话用于关联日志，不是多租户身份隔离。没有自动重试写入/点击，避免重复副作用。
-- MCP 当前采用有限子集，不宣称完整协议认证；网络断线可能取消当前请求，重连前应检查日志，不能直接重放未知结果的写入/点击。已用 Quick Tunnel 验证公网网页、REST 与 MCP 请求；尚未与真实云端 Agent 客户端联调。
-- 桌面包是本地 ad-hoc 签名构建，已支持自动更新，未做 Developer ID 签名、公证或安装器。系统授权与构建身份有关；替换构建后可能需重新授权。
+Release builds check GitHub Releases five seconds after startup and every six hours thereafter. New versions download in the background. The menu bar and **Connection → Software updates** show progress, release notes, and a restart/install action. Normal exit also installs a completed download. The service continues during downloads; restarting or quitting ends active calls.
 
-## 远端接入
+The default release repository is [jo32/readyrig](https://github.com/jo32/readyrig). Private releases can use local `gh auth login` credentials, including Homebrew installations when launched from Finder, or `READYRIG_UPDATE_TOKEN` with read-only Contents access. Credentials go only to the GitHub API and are excluded from packages, logs, the console, and redirected downloads.
 
-在 ReadyRig 的「连接 → 接入你的 Agent」中切换到「公网」，选择「一次性链接」并点击「开启一次性链接」，即可通过 **Cloudflare Quick Tunnels** 获得临时 HTTPS 地址，无需 Cloudflare 账户、登录或自备域名。首次使用会优先寻找已安装的 `cloudflared`（包括 macOS Homebrew 路径）；找不到时从 Cloudflare 官方 GitHub 发布下载、校验 SHA-256，并保存在 ReadyRig 私有数据目录的 `cloudflared/` 中。不会覆盖系统安装。一次性链接不读取现有命名隧道配置或登录凭据。
+Updates match the current operating system, architecture, and desktop/browser build. ReadyRig verifies size and SHA-256, plus macOS app signature integrity, signing team, and bundle ID. Signed installations cannot downgrade to ad-hoc signatures. Downloads retry up to three times, duplicate checks are merged, completed downloads survive later network failures, and replacement failures roll back. Concurrent processes cannot update the same installation.
 
-「复制给 Agent」提供随本机 / 公网地址切换的接入 Prompt，可直接粘贴到支持终端或 HTTP 请求的 Agent；它会先调用 `help` 与 `list_projects` 检查连接及目录，再等待任务。复制时会重新读取当前地址，公网未就绪时不提供失效 Prompt。
-
-本机与公网共用一套 Agent 地址和 MCP 复制操作；配置详情与连接诊断默认折叠。公网连接成功后，还可以打开或复制只读网页控制台，例如：
-
-- Agent：`https://example.trycloudflare.com/aSsxba11`
-- MCP：`https://example.trycloudflare.com/aSsxba11/mcp`
-- 网页控制台：`https://example.trycloudflare.com/aSsxba11/app/`
-
-完整地址中的随机 8 位路径就是访问凭据；持有地址的人可使用本机已开放的工具、查看日志和截图。网页控制台仅供查看，权限、项目目录、完全访问、暂停/恢复、软件更新和隧道开关仍只在本机管理。REST/MCP 继续执行本机能力与目录限制。隧道只转发 Agent 端口，本机管理端口不会被转发。
-
-连接成功后才显示可复制地址；连接失败会显示错误与最近诊断。可以取消连接、关闭分享或重新连接。默认不开启分享，关闭或退出 ReadyRig 时停止 cloudflared 并清除公网地址；分享不会在下次启动时自动恢复。一次性链接每次开启会重新申请临时域名，ReadyRig 每次重启会更换其随机路径。固定链接保存域名与独立访问路径，重启后重新开启仍使用相同完整地址；关闭分享时该访问路径立即停止接受新请求。
-
-命令行也可显式开启：
+`dev` and source-description builds do not self-update. Read-only or Homebrew-managed installations show manual update instructions without requesting administrator privileges in the background. Restart restores launch arguments, initializes capabilities from those arguments, and generates a new local/temporary agent path. Browser mode requires login through the newly printed dashboard URL. Fixed sharing must be restarted to restore its saved URL.
 
 ```sh
-bin/readyrig-web web --share
-# 可选：指定已有的 cloudflared 程序
-bin/readyrig-web web --share --cloudflared /opt/homebrew/bin/cloudflared
+bin/readyrig version                 # Show the current version.
+bin/readyrig update                  # Check, download, and install; use the console if already running.
+bin/readyrig --no-update              # Disable updates for this run; or set READYRIG_NO_UPDATE=1.
+make app VERSION=0.5.0               # Builds without VERSION are marked dev.
+make release VERSION=0.5.0           # Packages, binaries, and SHA256SUMS in dist/releases/0.5.0/.
 ```
 
-固定链接使用 Cloudflare 的远程管理命名隧道：
+Use `--update-repo owner/repo` / `READYRIG_UPDATE_REPO` to change the repository, or `--update-feed URL` / `READYRIG_UPDATE_FEED` for a Magpie-compatible feed with `{version, notes, url, assets: {filename: {url, size, sha256}}}`. Custom feeds require HTTPS; loopback HTTP is allowed for local testing.
 
-1. 在 Cloudflare 账号中创建 cloudflared 隧道，并复制 Tunnel Token。
-2. 在隧道中添加「已发布应用路由」，将自己的域名（例如 `readyrig.example.com`）指向 ReadyRig 的 **Agent 接口**（默认服务类型 `HTTP`，地址 `127.0.0.1:7332`，不是管理页面的 7331 端口）。若修改了网关监听端口，应同步修改 Cloudflare 路由；界面会显示当前服务地址。
-3. 在 ReadyRig 的「公网 → 固定链接」填写域名和 Token，保存并开启。支持输入完整 HTTPS 地址或纯域名；不接受路径、IP 地址或临时 trycloudflare 域名。
+Update management endpoints are local only: `GET /api/update`, `POST /api/update/check`, and `POST /api/update/restart`. Call detail and cancellation endpoints, `GET /api/calls/{id}` and `POST /api/calls/{id}/cancel`, are also local only. Agents terminate their own commands through `write_stdin`.
 
-固定链接要求 `cloudflared` 2025.4.0 或更新版本（支持 `--token-file`）。Token 和固定访问路径以仅当前用户可读写的配置文件保存在私有数据目录；界面只返回是否已保存，不回传 Token。启动时通过权限为 `0600` 的临时文件传递 Token，退出后清理，不放入命令行参数或诊断日志。公网控制台不能读取或修改固定配置。首次连接会核对固定域名是否确实到达本次 ReadyRig 实例，配置错误时不提供可复制链接。界面中的「保存配置」不会开启公网分享；重启后也不会自动开启。
+## Security boundaries and limitations
 
-参见 [Cloudflare 命名隧道设置](https://developers.cloudflare.com/tunnel/get-started/) 和 [Token 文件参数](https://developers.cloudflare.com/tunnel/reference/run-parameters/#token-file)。Cloudflare 账号、域名和 DNS 路由仍需用户在自己的账号中配置。
+- **Files:** Go `os.Root` confines file operations to authorized projects by default, permits absolute paths within them, and rejects parent traversal and symlinks pointing outside. Full Access permits other directories under the current account's permissions.
+- **Terminal:** Commands run as the current user through `/bin/sh` on the host. Working directories are restricted to projects unless Full Access is enabled, but commands can still access other paths, networks, and devices available to that user. There is no Docker execution backend, PTY, or Windows shell adaptation. Terminal access is disabled by default. Timeouts default to 60 seconds and are capped at 600 seconds; output is capped at 1 MiB per stream. Cancellation stops process groups, but intentionally detached processes require operating system sandboxing to constrain.
+- **Desktop:** macOS requires Screen Recording and Accessibility permissions. The driver uses system screenshots and CoreGraphics input events, controls the main display with the real pointer, and has no accessibility element tree, background window input, OCR, browser extension, or display selector. Native Windows/Linux drivers return an explicit unsupported error. Input is rejected when the pointer is at a screen corner; drags check cancellation and corner conditions and release held buttons. Pause cannot undo completed actions.
+- **Network:** Agent and management interfaces are separate. Access paths use constant-time comparisons. REST/MCP reject browser Origin headers; the public read-only console permits same-origin GET/HEAD. The local console defends against cross-site requests and DNS rebinding. `--allow-ip 127.0.0.1/32,::1/128` restricts directly connected peers; client-supplied forwarded IPs are not trusted.
+- **Logs and credentials:** Per-run random paths stay in memory, and data directories are created with `0700` permissions. Logs redact token/password/secret fields, the current random path, and dashboard key, but cannot identify every secret in free text or images. Treat logs and screenshots as sensitive local data. Logs persist without automatic cleanup or quotas. SQLite records call start and completion; restart marks unfinished calls as `interrupted`. Long-running command output is saved as it changes, and final results are recorded without client polling. Screenshots are stored separately from list summaries.
+- **Shared access:** Holders of an agent URL share one authorization identity. Sessions correlate logs rather than isolate tenants. Writes and clicks are not automatically retried. Turning off public sharing does not itself cancel commands already running.
+- **MCP:** The gateway implements a limited subset without claiming full protocol certification. A disconnect may cancel the current request; check logs before reconnecting and repeating an operation whose outcome is unknown. Quick Tunnel web, REST, and MCP access have been verified; integration with real cloud agent clients remains unverified.
+- **Distribution:** Desktop packages currently use local ad-hoc signing without Developer ID signing, notarization, or an installer. Their update provenance relies on the authenticated GitHub release source and checksums. System permissions may need to be granted again when the build identity changes. Changing signing teams requires a manual installation.
 
-Quick Tunnels 适合临时分享，没有固定域名或可用性保证，最多支持 200 个并发请求，不支持 SSE；公网控制台每 5 秒刷新，MCP 使用 JSON HTTP 响应。需要固定域名时，可使用固定链接模式。参见 [Cloudflare 官方 Quick Tunnels 说明](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)。
-
-## 验证与项目结构
+## Development and verification
 
 ```sh
-make test                       # Go race tests
+make test                       # Go race tests.
 node --check internal/server/assets/app.js
-make build                      # native Wails application
-make cli                        # browser/headless binary
+node --test scripts/test-i18n.cjs
+make build                      # Native Wails application.
+make cli                        # Browser/headless binary.
 ```
+
+For the website and cloud service, see [website/README.md](website/README.md) and [cloud/README.md](cloud/README.md).
 
 ```text
-cmd/adapter/          启动参数、两个 HTTP 入口、应用生命周期
-internal/harness/    tool spec、注册与调度、暂停、文件和终端执行器
-internal/chromemcp/  Chrome 检测、官方 MCP stdio 桥接、动态工具与生命周期
-internal/tunnel/     临时/固定隧道生命周期、凭证保存、路由验证、官方下载与诊断
-internal/computer/   可替换 Driver、截图压缩、坐标映射、macOS 输入
-internal/store/      SQLite 日志、过滤、会话、崩溃恢复
-internal/server/     REST、MCP、认证、OpenAPI、事件流、静态界面
-internal/desktop/    Wails 窗口与菜单栏
-internal/update/     GitHub 私有发布认证、后台下载、校验与退出安装
-internal/buildinfo/  构建版本与发布仓库
-scripts/             macOS .app 打包
+cmd/adapter/         Launch options, HTTP entry points, application lifecycle
+internal/brand/      Shared ReadyRig icon assets
+internal/harness/    Tool specs, registry, dispatch, pause, files, projects, terminal
+internal/chromemcp/  Chrome discovery, official MCP stdio bridge, dynamic tools
+internal/cloud/      Account binding, device credentials, heartbeats, command receipts
+internal/tunnel/     Temporary/fixed tunnels, credentials, validation, downloads, diagnostics
+internal/computer/   Replaceable driver, screenshot compression, coordinates, macOS input
+internal/store/      SQLite logs, filters, sessions, crash recovery
+internal/server/     REST, MCP, authentication, OpenAPI, events, embedded console
+internal/desktop/    Wails window and menu bar
+internal/i18n/       Native menu and dialog translations
+internal/update/     Release authentication, downloads, verification, exit installation
+internal/buildinfo/  Build version and release repository
+scripts/             Packaging and integration checks
+website/             React website and cloud device console
+cloud/               Cloudflare Worker, D1 migrations, cloud API
 ```
 
-测试覆盖：文件穿越/符号链接逃逸、读写/查找、参数验证、日志脱敏、暂停及排队取消、stdin/异步进程、超时/进程组终止、输出上限、后台退出自动审计、MCP 初始化/调用、随机路径授权/重启轮换/Origin/CSRF/DNS rebinding、日志重启恢复、Retina 坐标、过期/跨会话 frame、单次取消、能力关闭互不干扰、实时日志不消耗远端输出、摘要与完整详情、参考帧的会话隔离。Chrome 桥接测试覆盖真实子进程协议、分页发现、复杂 schema、图片/结构化结果保留、上游失败、取消重连、停用与本机地址检查。隧道测试覆盖真实子进程、重复启动、取消/退出清理、配置隔离、连接就绪与超时、诊断上限、下载校验、路径/归档边界和公网只读路由。测试不自动开放公网或操作用户桌面。
+Tests cover file traversal and symlink escape, file operations, validation, redaction, pause and queued cancellation, stdin and asynchronous processes, timeout and process-group termination, output limits, final audit records, MCP initialization/calls, access-path authorization and rotation, Origin/CSRF/DNS rebinding, log recovery, Retina mapping, expired and cross-session frames, individual cancellation, capability isolation, live output without consuming agent reads, and summary/detail loading. Chrome tests cover subprocess protocols, paginated discovery, complex schemas, image/structured results, failures, cancellation/reconnection, disabling, and local address validation. Tunnel tests cover subprocess lifecycle, duplicate starts, cleanup, configuration isolation, readiness/timeouts, diagnostic limits, checksum verification, path/archive boundaries, and public read-only routes. Tests do not open real public tunnels or operate your desktop automatically.
 
-## 设计参考
+`python3 scripts/test-update.py` verifies a real binary update from 0.4.0 to 0.5.0 and restart in a temporary directory, retaining logs and workspace data.
 
-- [Codex](https://github.com/openai/codex)：工具规格、注册表/执行器分离、统一 dispatch 生命周期，以及 `exec_command` / `write_stdin` 的渐进输出方式。参照 main 浅克隆（depth=1、稀疏检出），提交 `94d642d8b40e45e2e544770f0d1f28df9a717f06`。
-- [Magpie](https://github.com/yetone/magpie)：Go + Wails v3 + 嵌入原生 HTML/CSS/JS、桌面/网页共用 HTTP handler、轻量信息密度和调用追踪。参照提交 `74834748b98daeb295bf78b38170967e426e0c59`。
-- [现有产品调研](docs/product-research.md)：Cua Driver、Peekaboo、Munim、Gokin Studio、Go MCP server、Bytebot；明确可复用能力和未验证项。
+The [release workflow](.github/workflows/release.yml) tests and builds macOS Intel/Apple Silicon desktop packages and macOS/Linux/Windows browser binaries for both architectures, then publishes GitHub Releases when a `vX.Y.Z` tag is pushed. Local `make release` builds without uploading. Set `SIGN_IDENTITY` to select a macOS signing identity.
 
-执行后端独立实现。界面复用了 Magpie 的 MIT 授权主题变量、分段导航、统计和调用详情样式，版权声明见 `internal/server/assets/MAGPIE-LICENSE.txt`。自动更新流程参考 Magpie 提交 `575a8f5fe3bba6ca22f8ec0509eb3af88100aac0`，更新模块另保留 `internal/update/MAGPIE-LICENSE.txt`。后续引入第三方 Driver 时需分别核对其 API、许可与分发要求。
+## Compatibility
 
-### ReadyRig 菜单栏
+The product name is **ReadyRig**, the desktop bundle is `ReadyRig.app`, and commands are `readyrig` / `readyrig-web`. The website and app share `internal/brand/assets/readyrig-app-icon.png`.
 
-左键点击小电脑图标打开快捷面板，点击面板外部会收起；右键打开原生菜单，可打开完整窗口、暂停/恢复控制、检查更新或退出。关闭主窗口后服务继续驻留，退出应用才会停止。空闲时光标轻闪，工具执行时播放输入动画，暂停时显示暂停标记；遵循 macOS「减少动态效果」。Dock 和应用程序目录使用同一小电脑图标。
+If `~/.local/share/readyrig` does not exist, ReadyRig reuses an existing `~/.local/share/readrig` or `~/.local/share/relay`, in that order, preserving projects, logs, and sharing configuration without moving or deleting data. The signing identifier remains `dev.local.relay` for system permission and update verification compatibility.
 
-新安装的数据默认保存在 `~/.local/share/readyrig`。若该目录不存在，则依次复用已有的 `~/.local/share/readrig`、`~/.local/share/relay`，保留项目、日志和分享配置，不移动或删除旧数据。应用签名标识 `dev.local.relay` 沿用旧值，以保持系统授权和更新验证兼容。
+Update configuration uses `READYRIG_UPDATE_REPO`, `READYRIG_UPDATE_FEED`, `READYRIG_UPDATE_TOKEN`, and `READYRIG_NO_UPDATE`. Corresponding legacy `RELAY_*` variables remain fallbacks when the new variables are unset.
 
-正式名称为 **ReadyRig**，桌面安装包为 `ReadyRig.app`，命令为 `readyrig` / `readyrig-web`。官网和 App 共用 `internal/brand/assets/readyrig-app-icon.png`。更新配置使用 `READYRIG_UPDATE_REPO`、`READYRIG_UPDATE_FEED`、`READYRIG_UPDATE_TOKEN` 和 `READYRIG_NO_UPDATE`；未设置新变量时仍识别对应的 `RELAY_*` 旧变量。
+Release scripts produce primary `readyrig-*` packages and compatibility `readrig-*` / `relay-*` assets so existing clients can find updates. Compatibility desktop bundles retain their old folder and executable names while displaying ReadyRig. Historical release names remain unchanged.
 
-发布脚本以 `readyrig-*` 为主包名，同时生成旧 `readrig-*`、`relay-*` 包名的升级兼容文件，供已有客户端找到新版本。兼容桌面包保留旧文件夹与可执行文件名，但应用显示名称仍是 ReadyRig；新安装使用 `ReadyRig.app`。已发布版本中的历史名称不变。
+## Design references and attribution
 
-### Chrome 已开启调试但 ReadyRig 提示授权
+- [Codex](https://github.com/openai/codex): tool specifications, registry/executor separation, dispatch lifecycle, and progressive `exec_command` / `write_stdin` output. Reference commit: `94d642d8b40e45e2e544770f0d1f28df9a717f06` from a shallow, sparse checkout of main.
+- [Magpie](https://github.com/yetone/magpie): Go, Wails v3, embedded HTML/CSS/JS, shared desktop/web HTTP handlers, compact information density, and call tracing. Reference commit: `74834748b98daeb295bf78b38170967e426e0c59`.
+- [Product research](docs/product-research.md): Cua Driver, Peekaboo, Munim, Gokin Studio, Go MCP servers, and Bytebot, including reusable capabilities and unverified claims.
 
-Chrome 144+ 的 `chrome://inspect/#remote-debugging` 模式只提供 WebSocket 调试入口，`/json/version` 返回 404 是正常行为。ReadyRig 从 `DevToolsActivePort` 读取本机地址，并直接传给官方 Chrome DevTools MCP；MCP 子进程无需再次读取 Chrome 数据目录。
-
-如果 macOS 阻止读取入口，ReadyRig 显示「需要授权」。在桌面 App 点击「授权调试入口」，在系统文件选择器中选择 Chrome 目录内的 `DevToolsActivePort`，随后自动重新检测。取消选择不会改变权限。若系统仍拒绝，检查「系统设置 → 隐私与安全性」中的 ReadyRig 数据访问权限；网页模式需要为启动程序的终端授予权限。首次实际调用浏览器工具时，仍需在 Chrome 中允许连接。授权按钮只存在于本机桌面窗口，公网和网页控制台不会打开系统授权窗口。
-
-Chrome 工具清单与浏览器连接分别准备：开启浏览器能力后，ReadyRig 先从官方 MCP 加载工具定义。Chrome 未开启调试或入口需要授权时，工具仍会出现在列表中，标记为「待连接」，此时调用会返回具体的连接或授权提示。检测到调试入口后自动切换至该入口；首次实际调用仍由 Chrome 请求允许连接。
+The execution backend is independently implemented. The console reuses Magpie's MIT-licensed theme variables, segmented navigation, statistics, and call-detail styles; see `internal/server/assets/MAGPIE-LICENSE.txt`. Automatic updates reference Magpie commit `575a8f5fe3bba6ca22f8ec0509eb3af88100aac0`, with attribution in `internal/update/MAGPIE-LICENSE.txt`. Future third-party drivers require separate API, license, and distribution reviews.
