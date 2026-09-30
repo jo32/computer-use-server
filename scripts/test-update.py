@@ -2,11 +2,12 @@
 """Exercise real versioned binaries, authenticated APIs, shutdown and restart.
 
 All processes, ports, logs and installation files are isolated in a temp folder.
-Set RELAY_TEST_PAUSE=1 to inspect the ready UI; create the printed continue file
+Set READYRIG_TEST_PAUSE=1 to inspect the ready UI; create the printed continue file
 when done. No production installation or user data is touched.
 """
 import hashlib
 import http.server
+import http.cookiejar
 import json
 import os
 import pathlib
@@ -41,13 +42,13 @@ def eventually(fn, timeout=30):
     raise AssertionError('timed out waiting for expected update state')
 
 
-with tempfile.TemporaryDirectory(prefix='relay-update-e2e-') as tmp:
+with tempfile.TemporaryDirectory(prefix='readyrig-update-e2e-') as tmp:
     root = pathlib.Path(tmp)
     arch = subprocess.check_output(['go', 'env', 'GOARCH'], text=True).strip()
     goos = subprocess.check_output(['go', 'env', 'GOOS'], text=True).strip()
-    installed = root / 'relay'
-    desktop = os.environ.get('RELAY_TEST_DESKTOP') == '1'
-    flavor = 'relay' if desktop else 'relay-web'
+    installed = root / 'readyrig'
+    desktop = os.environ.get('READYRIG_TEST_DESKTOP', os.environ.get('RELAY_TEST_DESKTOP')) == '1'
+    flavor = 'readyrig' if desktop else 'readyrig-web'
     new = root / f'{flavor}-{goos}-{arch}'
     for version, target in [('0.4.0', installed), ('0.5.0', new)]:
         subprocess.run(['go', 'build', *([] if desktop else ['-tags', 'nogui']), '-ldflags',
@@ -87,7 +88,7 @@ with tempfile.TemporaryDirectory(prefix='relay-update-e2e-') as tmp:
         if desktop:
             def staged():
                 return any(p.stat().st_mode & 0o111 and p.read_bytes() == new.read_bytes()
-                           for p in root.glob('.relay-update-*/download'))
+                           for p in root.glob('.readyrig-update-*/download'))
             eventually(staged)
             # chmod is the final staging operation, just before publishing ready.
             time.sleep(.2)
@@ -98,26 +99,30 @@ with tempfile.TemporaryDirectory(prefix='relay-update-e2e-') as tmp:
             raise SystemExit(0)
         key = eventually(lambda: keys() and keys()[0])
 
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
         def api(path, data=None):
             req = urllib.request.Request(base + path, data=json.dumps(data).encode() if data is not None else None,
-                                         headers={'Cookie': 'adapter_ui=' + key, 'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=5) as r:
+                                         headers={'Content-Type': 'application/json'})
+            with opener.open(req, timeout=5) as r:
                 return json.load(r)
 
+        api('/api/login', {'key': key})
         api('/api/update/check', {})
         eventually(lambda: api('/api/update')['state'] == 'ready')
         assert api('/api/state')['version'] == '0.4.0'
-        assert subprocess.check_output([str(installed), 'version'], text=True).strip() == 'Relay 0.4.0'
+        assert subprocess.check_output([str(installed), 'version'], text=True).strip() == 'ReadyRig 0.4.0'
         # Ensure normal service data survives the restart.
         api('/api/tools/write_file', {'path': 'update-test.txt', 'content': 'preserved'})
         total = api('/api/state')['summary']['total']
-        if os.environ.get('RELAY_TEST_PAUSE') == '1':
+        if os.environ.get('READYRIG_TEST_PAUSE', os.environ.get('RELAY_TEST_PAUSE')) == '1':
             print(f'Dashboard: {base}/#key={key}', flush=True)
             print(f'Continue file: {root / "continue"}', flush=True)
             eventually(lambda: (root / 'continue').exists(), timeout=600)
         api('/api/update/restart', {})
         eventually(lambda: len(keys()) >= 2)
         key = keys()[-1]
+        api('/api/login', {'key': key})
         assert api('/api/state')['version'] == '0.5.0'
         assert api('/api/state')['summary']['total'] == total
         assert api('/api/state')['enabled']['terminal'] is False

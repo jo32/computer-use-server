@@ -1,0 +1,16 @@
+{
+  "name": "readyrig-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --var PUBLIC_ORIGIN:http://localhost:8787",
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "build": "npm --prefix ../website run build && npm run check",
+    "deploy": "npm run build && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "db:remote": "wrangler d1 migrations apply DB --remote"
+  },
+  "dependencies": { "jose": "^6.1.0" },
+  "devDependencies": { "@cloudflare/workers-types": "^5.20260930.2", "@types/node": "^24.0.0", "typescript": "^5.9.3", "wrangler": "^4.145.0" }
+}

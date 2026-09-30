@@ -133,7 +133,7 @@ func (c *client) call(ctx context.Context, method string, params any) (json.RawM
 	}
 }
 func (c *client) initialize(ctx context.Context) error {
-	raw, err := c.call(ctx, "initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "Relay", "version": "0.4.0"}})
+	raw, err := c.call(ctx, "initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "ReadyRig", "version": "0.4.0"}})
 	if err != nil {
 		return err
 	}

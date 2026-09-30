@@ -16,7 +16,7 @@ func lockData(dir string) (func(), error) {
 	}
 	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("another Relay process is using this data directory: %w", err)
+		return nil, fmt.Errorf("another ReadyRig process is using this data directory: %w", err)
 	}
 	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
 }

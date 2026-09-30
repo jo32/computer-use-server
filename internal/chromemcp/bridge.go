@@ -125,18 +125,28 @@ func (b *Bridge) reconcile(ctx context.Context) {
 		return
 	}
 	t, err := b.detect(ctx, b.opts)
+	connection := Status{State: "ready", Message: "工具已接入；首次使用时请允许 Chrome 的连接请求。"}
 	if err != nil {
-		b.disconnect()
-		b.setStatus(Status{State: "waiting", Message: err.Error()})
-		return
+		connection = Status{State: "waiting", Message: err.Error()}
+		if errors.Is(err, ErrDebugPermission) {
+			connection.State = "permission_required"
+		}
+		// Tool metadata is available before Chrome connects. Use attachment mode
+		// while waiting, so listing tools can never launch another browser.
+		t = target{Key: "catalog|" + b.opts.UserDataDir + "|" + b.opts.BrowserURL, Args: []string{"--autoConnect", "--channel=stable"}}
+		if b.opts.UserDataDir != "" {
+			t.Args = append(t.Args, "--user-data-dir="+b.opts.UserDataDir)
+		}
 	}
 	b.mu.Lock()
-	c, key := b.client, b.key
+	c, key, count := b.client, b.key, b.status.Tools
 	b.mu.Unlock()
 	if c != nil && key == t.Key {
 		select {
 		case <-c.done:
 		default:
+			connection.Tools = count
+			b.setStatus(connection)
 			return
 		}
 	}
@@ -169,7 +179,8 @@ func (b *Bridge) reconcile(ctx context.Context) {
 			b.key = t.Key
 			b.mu.Unlock()
 			b.registry.ReplaceCategory("browser", tools)
-			b.setStatus(Status{State: "ready", Message: "工具已接入；首次使用时请允许 Chrome 的连接请求。", Tools: len(tools)})
+			connection.Tools = len(tools)
+			b.setStatus(connection)
 			return
 		}
 		c.Close()
@@ -216,6 +227,13 @@ func (b *Bridge) loadTools(ctx context.Context, c *client) ([]harness.Tool, erro
 			name := t.Name
 			readOnly, _ := t.Annotations["readOnlyHint"].(bool)
 			out = append(out, harness.Tool{Spec: harness.Spec{Name: "chrome_" + name, Description: t.Description, Category: "browser", InputSchema: t.InputSchema, OutputSchema: t.OutputSchema, Annotations: t.Annotations, Mutating: !readOnly, Parallel: false}, External: true, Run: func(ctx context.Context, in harness.Invocation) (harness.Output, error) {
+				b.mu.Lock()
+				available := b.client == c && b.status.State == "ready"
+				message := b.status.Message
+				b.mu.Unlock()
+				if !available {
+					return harness.Output{}, fmt.Errorf("Chrome 尚未就绪：%s", message)
+				}
 				// A stale tool reference must never reconnect and silently repeat an action.
 				callCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer cancel()

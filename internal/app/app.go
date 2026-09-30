@@ -6,6 +6,7 @@ import (
 	"computer-use-server/internal/harness"
 	"computer-use-server/internal/server"
 	"computer-use-server/internal/store"
+	"computer-use-server/internal/tunnel"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -74,17 +75,31 @@ func New(workspace, dataDir string) (*App, error) {
 		s.Close()
 		return nil, err
 	}
+	projects, err := harness.NewProjects(workspace, filepath.Join(dataDir, "projects.json"))
+	if err != nil {
+		files.Close()
+		s.Close()
+		return nil, err
+	}
+	files.Projects = projects
+	projects.Register(registry)
 	processes := harness.NewProcesses(workspace)
+	processes.Projects = projects
 	c := computer.New(filepath.Join(dataDir, "screenshots"))
 	files.Register(registry)
 	processes.Register(registry)
 	c.Register(registry)
 	registry.OnPause = processes.Stop
 	chrome := chromemcp.New(registry)
+	sharing := tunnel.New(tunnel.Options{Dir: filepath.Join(dataDir, "cloudflared"), Changed: registry.Signal, RedactSecrets: registry.AddSecrets})
 	ready = true
-	return &App{unlock: unlock, Server: &server.Server{Registry: registry, Store: s, Computer: c, Chrome: chrome, Workspace: workspace, AccessPath: accessPath, UIKey: uiKey}, Processes: processes, Files: files, Chrome: chrome}, nil
+	return &App{unlock: unlock, Server: &server.Server{Registry: registry, Projects: projects, Store: s, Computer: c, Chrome: chrome, Tunnel: sharing, Workspace: workspace, AccessPath: accessPath, UIKey: uiKey}, Processes: processes, Files: files, Chrome: chrome}, nil
 }
 func (a *App) Close() {
+	if a.Server.Cloud != nil {
+		a.Server.Cloud.Close()
+	}
+	a.Server.Tunnel.Close()
 	a.Server.Registry.SetPaused(true)
 	a.Chrome.Close()
 	a.Processes.Stop()

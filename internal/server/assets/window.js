@@ -1,8 +1,15 @@
 'use strict';
 
-const relayWindow = (() => {
+const readyRigWindow = (() => {
   const shell = new URLSearchParams(location.search).get('shell');
-  if (shell === 'darwin') document.body.classList.add('native-mac');
+  const panel = new URLSearchParams(location.search).get('panel') === '1';
+  document.body.classList.toggle('native-panel',panel);
+  if (shell && panel) {
+    const openMain=document.getElementById('open-main');
+    openMain.classList.remove('hidden');
+    openMain.onclick=()=>fetch('/api/window/open',{method:'POST'}).catch(console.error);
+  }
+  if (shell === 'darwin' && !panel) document.body.classList.add('native-mac');
   if (shell) {
     // Wails installs dragging from --wails-draggable when its runtime loads.
     // Browser mode keeps its normal header and never requests this module.
@@ -36,13 +43,16 @@ const relayWindow = (() => {
   });
   setTimeout(wake, 250);
 
+  let lastStatus = { connected: false };
+  window.addEventListener('readyrig-language-change', () => readyRigWindow.setActivity(lastStatus));
   return {
     setActivity({ connected, paused = false, running = 0 }) {
+      lastStatus = { connected, paused, running };
       const activity = !connected ? 'offline' : paused ? 'paused' : running > 0 ? 'working' : 'ready';
-      const label = { offline: '连接已断开', paused: '控制已暂停', working: '正在运行', ready: '已就绪' }[activity];
+      const label = { offline: readyRigI18n.t("连接已断开"), paused: readyRigI18n.t("控制已暂停"), working: readyRigI18n.t("正在运行"), ready: readyRigI18n.t("已就绪") }[activity];
       brand.dataset.activity = activity;
-      brand.setAttribute('aria-label', `Relay · ${label}`);
-      brand.title = `Relay · ${label}`;
+      brand.setAttribute('aria-label', `ReadyRig · ${readyRigI18n.t(label)}`);
+      brand.title = `ReadyRig · ${readyRigI18n.t(label)}`;
       if (activity === 'offline' || activity === 'paused') stopWake();
     },
   };

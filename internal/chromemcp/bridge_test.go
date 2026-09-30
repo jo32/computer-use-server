@@ -19,7 +19,7 @@ import (
 
 // A real child process exercises framing, initialization, paging, errors and cancellation.
 func TestMCPHelperProcess(t *testing.T) {
-	if os.Getenv("RELAY_MCP_TEST_CHILD") != "1" {
+	if os.Getenv("READYRIG_MCP_TEST_CHILD") != "1" {
 		return
 	}
 	initialized := false
@@ -76,7 +76,7 @@ func testBridge(t *testing.T) (*Bridge, *harness.Registry, *store.Store) {
 	b := New(r)
 	b.detect = func(context.Context, Options) (target, error) { return target{Key: "test"}, nil }
 	b.resolve = func(Options, target) (string, []string, []string, error) {
-		return os.Args[0], []string{"-test.run=^TestMCPHelperProcess$"}, append(os.Environ(), "RELAY_MCP_TEST_CHILD=1"), nil
+		return os.Args[0], []string{"-test.run=^TestMCPHelperProcess$"}, append(os.Environ(), "READYRIG_MCP_TEST_CHILD=1"), nil
 	}
 	if err := b.Start(Options{}); err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestDiscoveryRequiresChromeAndLiveDebugging(t *testing.T) {
 		t.Fatal("browser not installed")
 	}
 	target, err := discoverAt(context.Background(), opts, []string{binary}, []string{dir})
-	if err != nil || len(target.Args) != 2 || target.Args[0] != "--autoConnect" {
+	if err != nil || len(target.Args) != 1 || !strings.HasPrefix(target.Args[0], "--ws-endpoint=ws://127.0.0.1:"+port+"/devtools/browser/") {
 		t.Fatal(target, err)
 	}
 	listener.Close()
@@ -233,5 +233,61 @@ func TestDiscoveryRequiresChromeAndLiveDebugging(t *testing.T) {
 		if _, err := discoverAt(context.Background(), opts, []string{binary}, []string{dir}); err == nil {
 			t.Fatal("invalid marker accepted", bad)
 		}
+	}
+}
+
+func TestCatalogRemainsVisibleUntilChromeIsReady(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := harness.New(s)
+	b := New(r)
+	t.Cleanup(func() { b.disconnect(); r.WaitBackground(); s.Close() })
+	var detectErr error = ErrDebugPermission
+	b.detect = func(context.Context, Options) (target, error) {
+		if detectErr != nil {
+			return target{}, detectErr
+		}
+		return target{Key: "live-chrome", Args: []string{"--ws-endpoint=ws://127.0.0.1:9222/devtools/browser/test"}}, nil
+	}
+	starts := 0
+	b.resolve = func(_ Options, target target) (string, []string, []string, error) {
+		starts++
+		if starts == 1 && (len(target.Args) < 1 || target.Args[0] != "--autoConnect") {
+			t.Fatal("catalog may launch a separate browser", target)
+		}
+		return os.Args[0], []string{"-test.run=^TestMCPHelperProcess$"}, append(os.Environ(), "READYRIG_MCP_TEST_CHILD=1"), nil
+	}
+	b.reconcile(context.Background())
+	if status := b.Status(); status.State != "permission_required" || status.Tools != 3 || len(r.Specs()) != 3 {
+		t.Fatal("missing waiting catalog", status)
+	}
+	_, call, err := r.Invoke(context.Background(), "chrome_echo", harness.Invocation{Arguments: json.RawMessage(`{}`)})
+	if err == nil || call.Status != "error" || !strings.Contains(err.Error(), "授权") {
+		t.Fatal("unready browser call was forwarded", err, call.Status)
+	}
+	// Repeated checks keep the catalog process; a pending browser isn't a broken MCP.
+	b.reconcile(context.Background())
+	if starts != 1 {
+		t.Fatal("restarted catalog on every check", starts)
+	}
+	detectErr = fmt.Errorf("等待 Chrome 开启远程调试")
+	b.reconcile(context.Background())
+	if b.Status().State != "waiting" || len(r.Specs()) != 3 || starts != 1 {
+		t.Fatal("catalog disappeared while Chrome was closed")
+	}
+	detectErr = nil
+	b.reconcile(context.Background())
+	if b.Status().State != "ready" || starts != 2 {
+		t.Fatal("did not switch to live endpoint", b.Status(), starts)
+	}
+	if _, _, err = r.Invoke(context.Background(), "chrome_echo", harness.Invocation{Arguments: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal("connected call failed", err)
+	}
+	r.Enable("browser", false)
+	b.reconcile(context.Background())
+	if b.Status().State != "disabled" || len(r.Specs()) != 0 {
+		t.Fatal("disabled browser still published")
 	}
 }

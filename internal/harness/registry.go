@@ -54,19 +54,21 @@ type activeCall struct {
 }
 
 type Registry struct {
-	background sync.WaitGroup
-	foreground sync.WaitGroup
-	mu         sync.Mutex
-	tools      map[string]Tool
-	order      []string
-	active     map[string]activeCall
-	paused     bool
-	enabled    map[string]bool
-	serial     chan struct{}
-	store      *store.Store
-	notify     chan struct{}
-	secrets    []string
-	OnPause    func()
+	background  sync.WaitGroup
+	foreground  sync.WaitGroup
+	mu          sync.Mutex
+	tools       map[string]Tool
+	order       []string
+	active      map[string]activeCall
+	paused      bool
+	lastStarted time.Time
+	enabled     map[string]bool
+	serial      chan struct{}
+	store       *store.Store
+	notify      chan struct{}
+	secretsMu   sync.RWMutex
+	secrets     []string
+	OnPause     func()
 }
 
 func New(s *store.Store, secrets ...string) *Registry {
@@ -133,6 +135,13 @@ func (r *Registry) State() (bool, map[string]bool) {
 		e[k] = v
 	}
 	return r.paused, e
+}
+
+// Activity is a lightweight snapshot for the native menu bar; it avoids database polling.
+func (r *Registry) Activity() (paused bool, running int, lastStarted time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.paused, len(r.active), r.lastStarted
 }
 func (r *Registry) Changed() <-chan struct{} { r.mu.Lock(); defer r.mu.Unlock(); return r.notify }
 func (r *Registry) Signal() {
@@ -290,6 +299,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, in Invocation) (out 
 		return
 	}
 	r.active[in.ID] = activeCall{cancel, t.Spec.Category}
+	r.lastStarted = time.Now()
 	r.mu.Unlock()
 	if !t.Spec.Parallel {
 		select {
@@ -367,7 +377,15 @@ func (r *Registry) follow(saved store.Call, out Output) {
 		}
 	}
 }
+func (r *Registry) AddSecrets(secrets ...string) {
+	r.secretsMu.Lock()
+	defer r.secretsMu.Unlock()
+	r.secrets = append(r.secrets, secrets...)
+}
+
 func (r *Registry) redactText(s string) string {
+	r.secretsMu.RLock()
+	defer r.secretsMu.RUnlock()
 	for _, secret := range r.secrets {
 		if secret != "" {
 			s = strings.ReplaceAll(s, secret, "[REDACTED]")

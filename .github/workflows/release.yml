@@ -29,6 +29,7 @@ jobs:
           printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
           make test
           node --check internal/server/assets/app.js
+          node --test scripts/test-i18n.cjs
       - name: Build release assets
         env:
           VERSION: ${{ github.event.inputs.tag || github.ref_name }}
@@ -39,4 +40,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          gh release create "$VERSION" "dist/releases/${VERSION#v}/"* --verify-tag --generate-notes --title "Relay ${VERSION#v}"
+          gh release create "$VERSION" "dist/releases/${VERSION#v}/"* --verify-tag --generate-notes --title "ReadyRig ${VERSION#v}"

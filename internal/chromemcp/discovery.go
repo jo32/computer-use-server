@@ -4,6 +4,7 @@ package chromemcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -83,7 +84,22 @@ func discover(ctx context.Context, opts Options) (target, error) {
 	return discoverAt(ctx, opts, bins, profiles)
 }
 
+var ErrDebugPermission = errors.New("Chrome 调试入口需要授权：macOS 阻止了读取 DevToolsActivePort。请在 ReadyRig 中点击「授权调试入口」选择该文件；若仍被拒绝，请检查系统设置「隐私与安全性」中的 ReadyRig 数据访问权限，然后重新检测。网页模式请为启动 ReadyRig 的终端授予相应权限。")
+
+func readDebugMarker(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, 4097))
+}
+
 func discoverAt(ctx context.Context, opts Options, bins, profiles []string) (target, error) {
+	return discoverWithReader(ctx, opts, bins, profiles, readDebugMarker)
+}
+
+func discoverWithReader(ctx context.Context, opts Options, bins, profiles []string, readMarker func(string) ([]byte, error)) (target, error) {
 	installed := false
 	for _, p := range bins {
 		if s, e := os.Stat(p); e == nil && !s.IsDir() {
@@ -94,8 +110,20 @@ func discoverAt(ctx context.Context, opts Options, bins, profiles []string) (tar
 	if !installed {
 		return target{}, fmt.Errorf("未检测到本地 Google Chrome")
 	}
+	var explicitErr error
+	var explicitPort string
 	if opts.BrowserURL != "" {
-		return probeURL(ctx, opts.BrowserURL)
+		base, err := localURL(opts.BrowserURL)
+		if err != nil {
+			return target{}, err
+		}
+		if t, err := probeURL(ctx, base); err == nil {
+			return t, nil
+		} else {
+			explicitErr = err
+		}
+		u, _ := url.Parse(base)
+		explicitPort = u.Port()
 	}
 	if opts.UserDataDir != "" {
 		profiles = []string{opts.UserDataDir}
@@ -103,16 +131,14 @@ func discoverAt(ctx context.Context, opts Options, bins, profiles []string) (tar
 	var readErr error
 	for _, dir := range profiles {
 		// This file contains only a port and WebSocket path; never read browsing data.
-		f, err := os.Open(filepath.Join(dir, "DevToolsActivePort"))
+		b, err := readMarker(filepath.Join(dir, "DevToolsActivePort"))
 		if err != nil {
 			if !os.IsNotExist(err) {
 				readErr = err
 			}
 			continue
 		}
-		b, err := io.ReadAll(io.LimitReader(f, 4097))
-		f.Close()
-		if err != nil || len(b) > 4096 {
+		if len(b) > 4096 {
 			continue
 		}
 		lines := strings.Fields(string(b))
@@ -123,22 +149,38 @@ func discoverAt(ctx context.Context, opts Options, bins, profiles []string) (tar
 		if err != nil || port < 1 || port > 65535 || !strings.HasPrefix(lines[1], "/devtools/browser/") {
 			continue
 		}
+		if explicitPort != "" && explicitPort != strconv.Itoa(port) {
+			continue
+		}
+		wsPath, err := url.Parse(lines[1])
+		if err != nil || wsPath.RawQuery != "" || wsPath.Fragment != "" || wsPath.Host != "" || wsPath.Scheme != "" || strings.TrimPrefix(wsPath.Path, "/devtools/browser/") == "" {
+			continue
+		}
 		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 		conn, err := (&net.Dialer{Timeout: 500 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 		if err != nil {
 			continue
 		}
 		conn.Close()
-		return target{Key: dir + "|" + string(b), Args: []string{"--autoConnect", "--user-data-dir=" + dir}}, nil
+		// Pass the validated endpoint so Node does not need a second grant to
+		// read Chrome's protected data directory. Chrome still asks to allow CDP.
+		endpoint := "ws://" + addr + lines[1]
+		return target{Key: endpoint, Args: []string{"--ws-endpoint=" + endpoint}}, nil
 	}
 	// Explicit profiles must not silently attach to a different browser.
-	if opts.UserDataDir == "" {
+	if opts.UserDataDir == "" && opts.BrowserURL == "" {
 		if t, err := probeURL(ctx, "http://127.0.0.1:9222"); err == nil {
 			return t, nil
 		}
 	}
+	if errors.Is(readErr, os.ErrPermission) {
+		return target{}, ErrDebugPermission
+	}
 	if readErr != nil {
-		return target{}, fmt.Errorf("无法读取 Chrome 调试入口；请检查 Relay 对 Chrome 数据目录的访问权限，或指定 --chrome-browser-url")
+		return target{}, fmt.Errorf("无法读取 Chrome 调试入口：%w", readErr)
+	}
+	if explicitErr != nil {
+		return target{}, explicitErr
 	}
 	return target{}, fmt.Errorf("等待 Chrome 开启远程调试：chrome://inspect/#remote-debugging")
 }

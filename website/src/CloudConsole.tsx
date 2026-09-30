@@ -1,0 +1,77 @@
+import { useCallback, useEffect, useState } from 'react'
+import { AppIcon } from './components/Icon'
+import { LanguageSelect, useI18n } from './i18n'
+import type { Locale } from './locale'
+import './cloud-console.css'
+
+type User = { email: string; name: string }
+type Device = { id: string; name: string; platform: string; online: boolean; last_seen: number; snapshot: { version?: string; paused?: boolean; enabled?: Record<string, boolean>; tunnel?: { state?: string; message?: string; mode?: string; gateway?: string; mcp?: string; console?: string } } }
+type Command = { id: string; kind: string; payload: Record<string, unknown>; status: string; created_at: number; error?: string }
+type Pair = { name: string; platform: string; code: string; approved: boolean }
+class APIError extends Error { constructor(message: string, public status: number) { super(message) } }
+async function api<T>(path: string, method = 'GET', data?: unknown): Promise<T> {
+  const response = await fetch(path, { method, credentials: 'same-origin', headers: data === undefined ? {} : { 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) })
+  const result = await response.json()
+  if (!response.ok) throw new APIError(result.error || '请求失败', response.status)
+  return result as T
+}
+const commandNames: Record<string, string> = { 'tunnel.start': '开启公网', 'tunnel.stop': '关闭公网', 'control.pause': '调整暂停状态', 'capability.set': '调整能力开关' }
+const statusNames: Record<string, string> = { queued: '等待电脑领取', executing: '已送达，等待结果', completed: '已执行', failed: '执行失败', expired: '已过期', revoked: '设备已解绑' }
+const capabilities: Record<string, string> = { files: '文件', terminal: '终端', browser: 'Chrome 浏览器', computer: '桌面操作' }
+function GoogleMark() {
+  return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.39-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-1.99 3.02v2.51h3.23c1.89-1.74 2.98-4.31 2.98-7.36Z"/><path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.62-2.41l-3.23-2.51c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.12H3.05v2.59A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.39 13.92a6 6 0 0 1 0-3.84V7.49H3.05a10 10 0 0 0 0 9.02l3.34-2.59Z"/><path fill="#EA4335" d="M12 5.96c1.47 0 2.79.51 3.83 1.51l2.87-2.87A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.95 5.49l3.34 2.59A5.93 5.93 0 0 1 12 5.96Z"/></svg>
+}
+function time(seconds: number, locale: Locale, fallback: string) { return seconds ? new Date(seconds * 1000).toLocaleString(locale) : fallback }
+
+function DeviceCard({ device, refresh }: { device: Device; refresh: () => Promise<void> }) {
+  const { t, locale } = useI18n()
+  const [commands, setCommands] = useState<Command[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState(''), [editing, setEditing] = useState(false), [name, setName] = useState(device.name), [mode, setMode] = useState('quick')
+  const load = useCallback(async () => { const result = await api<{ commands: Command[] }>(`/api/devices/${device.id}/commands`); setCommands(result.commands) }, [device.id])
+  useEffect(() => { let alive = true; const update = () => { if (alive) void load().catch(e => { if (alive) setError(e.message) }) }; update(); const timer = setInterval(update, 5000); return () => { alive = false; clearInterval(timer) } }, [load])
+  const send = async (kind: string, payload: Record<string, unknown>) => {
+    setBusy(true); setError('')
+    try { await api(`/api/devices/${device.id}/commands`, 'POST', { kind, payload, request_id: crypto.randomUUID() }); await load() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+  const snapshot = device.snapshot, tunnel = snapshot.tunnel || {}, pending = commands.some(c => c.status === 'queued' || c.status === 'executing'), disabled = busy || pending || !device.online
+  const active = ['installing', 'starting', 'ready', 'stopping'].includes(tunnel.state || '')
+  return <article className="cloud-device">
+    <div className="cloud-device-heading"><div><h2>{device.name}</h2><p>{device.platform} · ReadyRig {snapshot.version || '—'}</p></div><span className={`cloud-presence ${device.online ? 'online' : ''}`}><i />{t(device.online ? '在线' : '离线')}</span></div>
+    <p className="cloud-last-seen">{t('最近心跳')} · {time(device.last_seen, locale, t('尚未上报'))}</p>
+    <div className="cloud-tunnel"><div><strong>{t(tunnel.state === 'ready' ? '公网已开启' : active ? '公网正在连接或关闭' : '公网未开启')}</strong><p>{t(tunnel.message || '在网页开启公网，电脑会自动启动 cloudflared。')}</p></div><div className="cloud-actions">{!active && <select aria-label={t('公网链接类型')} value={mode} onChange={e => setMode(e.target.value)} disabled={disabled}><option value="quick">{t('一次性链接')}</option><option value="fixed">{t('固定域名')}</option></select>}<button className="button button-primary" disabled={disabled} onClick={() => void send(active ? 'tunnel.stop' : 'tunnel.start', active ? {} : { mode })}>{t(active ? '关闭公网' : '开启公网')}</button></div></div>
+    {tunnel.state === 'ready' && tunnel.gateway && <div className="cloud-address"><label>{t('Agent 地址')}</label><code>{tunnel.gateway}</code><button className="button button-secondary" onClick={() => { void navigator.clipboard.writeText(tunnel.gateway!).catch(() => setError(t('复制失败，请手动复制地址'))) }}>{t('复制地址')}</button></div>}
+    <div className="cloud-capabilities">{Object.entries(capabilities).map(([key, label]) => <label key={key}><span>{t(label)}</span><input type="checkbox" aria-label={t(label)} role="switch" checked={snapshot.enabled?.[key] || false} disabled={disabled} onChange={e => void send('capability.set', { category: key, enabled: e.target.checked })} /></label>)}</div>
+    <div className="cloud-device-footer"><button className="button button-secondary" disabled={disabled} onClick={() => void send('control.pause', { paused: !snapshot.paused })}>{t(snapshot.paused ? '恢复控制' : '暂停控制')}</button><button className="button button-secondary" disabled={busy} onClick={() => { setName(device.name); setEditing(!editing) }}>{t('重命名')}</button><button className="cloud-danger" disabled={busy} onClick={() => { if (!confirm(t('解绑后，网页将无法控制这台电脑。已开启的公网链接仍需关闭。确认解绑？'))) return; setBusy(true); void api(`/api/devices/${device.id}`, 'DELETE').then(refresh).catch(e => setError(e.message)).finally(() => setBusy(false)) }}>{t('解绑电脑')}</button></div>
+    {editing && <form className="cloud-rename" onSubmit={e => { e.preventDefault(); setBusy(true); void api(`/api/devices/${device.id}`, 'PATCH', { name }).then(async () => { setEditing(false); await refresh() }).catch(e => setError(e.message)).finally(() => setBusy(false)) }}><input aria-label={t('电脑名称')} value={name} onChange={e => setName(e.target.value)} maxLength={128} required /><button className="button button-secondary" disabled={busy}>{t('保存名称')}</button></form>}
+    {!device.online && <p className="cloud-note">{t('电脑离线，请确认 ReadyRig 正在运行且电脑没有休眠。恢复心跳后可下发命令。')}</p>}
+    {error && <p className="cloud-error" role="alert">{t(error)}</p>}
+    <details className="cloud-command-history"><summary>{t('最近命令')}{pending ? ` · ${t('正在等待电脑处理')}` : ''}</summary>{commands.length ? <ol>{commands.map(c => <li key={c.id}><div><strong>{t(commandNames[c.kind] || c.kind)}</strong><span>{t(statusNames[c.status] || c.status)}</span></div><small>{time(c.created_at, locale, t('尚未上报'))}{c.kind === 'capability.set' ? ` · ${t(capabilities[String(c.payload.category)] || '')} ${t(c.payload.enabled ? '开启' : '关闭')}` : ''}{c.kind === 'control.pause' ? ` · ${t(c.payload.paused ? '暂停' : '恢复')}` : ''}</small>{c.error && <p className="cloud-error">{t(c.error)}</p>}</li>)}</ol> : <p>{t('暂无命令')}</p>}</details>
+  </article>
+}
+
+export default function CloudConsole() {
+  const { t } = useI18n()
+  const [user, setUser] = useState<User | null>(null), [devices, setDevices] = useState<Device[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState(''), [pair, setPair] = useState<Pair | null>(null), [approved, setApproved] = useState(false), [pairBusy, setPairBusy] = useState(false), [configured, setConfigured] = useState(true)
+  const pairID = new URLSearchParams(location.search).get('pair')
+  const refresh = useCallback(async () => { const data = await api<{ devices: Device[] }>('/api/devices'); setDevices(data.devices) }, [])
+  useEffect(() => {
+    let live = true
+    void api<{ user: User }>('/api/me').then(async data => {
+      if (!live) return; setUser(data.user); await refresh()
+      if (pairID) { const result = await api<Pair>(`/api/pairings/${encodeURIComponent(pairID)}`); if (live) setPair(result) }
+    }).catch(e => { if (live && !(e instanceof APIError && e.status === 401)) setError(e.message) }).finally(() => { if (live) setLoading(false) })
+    void api<{ google_configured: boolean }>('/api/health').then(data => { if (live) setConfigured(data.google_configured) }).catch(() => {})
+    return () => { live = false }
+  }, [pairID, refresh])
+  useEffect(() => { if (!user) return; const timer = setInterval(() => { void refresh().catch(e => setError(e.message)) }, 5000); return () => clearInterval(timer) }, [user, refresh])
+  return <div className={`cloud-shell${user ? '' : ' cloud-auth'}`}><header className="cloud-header"><a className="wordmark" href="/"><AppIcon width="32" height="32" /><span>ReadyRig</span></a>{user && <span>{t('设备控制台')}</span>}<LanguageSelect />{user && <div className="cloud-account"><span>{user.email}</span><button className="button button-secondary" onClick={() => { void api('/api/logout', 'POST', {}).then(() => location.assign('/console')).catch(e => setError(e.message)) }}>{t('退出登录')}</button></div>}</header><main className="cloud-main">{user && <div className="cloud-title"><span className="eyebrow">{t('你的电脑')}</span><h1>{t('从网页连接与管理。')}</h1><p>{t('Google 账号绑定设备；电脑持续发送心跳，领取命令并回传执行结果。')}</p></div>}
+    {loading ? <p role="status">{t('正在加载…')}</p> : !user ? <section className="cloud-sign-in" aria-labelledby="sign-in-title">
+      <h1 id="sign-in-title">{t('登录 ReadyRig')}</h1>
+      <p>{t('连接你的电脑。')}</p>
+      {configured ? <a className="button cloud-google-button" href={'/auth/google?return_to=' + encodeURIComponent(pairID ? '/console?pair=' + pairID : '/console')}><GoogleMark />{t('使用 Google 登录')}</a> : <><button className="button cloud-google-button" disabled><GoogleMark />{t('使用 Google 登录')}</button><span className="cloud-auth-status" role="status">{t('登录暂未开放')}</span></>}
+    </section> : <>
+      {pair && !approved && <section className="cloud-pair"><h2>{t('绑定这台电脑')} · {pair.name}</h2><p>{t('核对 ReadyRig 显示的验证码，确认这是你正在登录的电脑。绑定后，本账号可远程开启公网与调整能力。')}</p><strong className="cloud-pair-code">{pair.code}</strong><button className="button button-primary" disabled={pairBusy} onClick={() => { setPairBusy(true); void api(`/api/pairings/${pairID}`, 'POST', {}).then(() => { setApproved(true); history.replaceState(null, '', '/console'); void refresh() }).catch(e => setError(e.message)).finally(() => setPairBusy(false)) }}>{t('确认绑定到我的账号')}</button></section>}
+      {approved && <p className="cloud-note" role="status">{t('已确认绑定，等待电脑完成连接。可以返回 ReadyRig。')}</p>}
+      {devices.length ? <div className="cloud-device-grid">{devices.map(device => <DeviceCard key={device.id} device={device} refresh={refresh} />)}</div> : <div className="cloud-empty"><h2>{t('还没有绑定的电脑')}</h2><p>{t('打开 ReadyRig → 连接 → 云端账号，填写本站地址并登录 Google。')}</p><code>{location.origin}</code></div>}
+      <p className="cloud-note">{t('命令通常在下次心跳时送达，约 15 秒。60 秒未收到心跳显示离线；命令 5 分钟后过期。固定域名和 Tunnel Token 在本机配置。')}</p>
+    </>}{error && <p className="cloud-error" role="alert">{t(error)}</p>}</main></div>
+}

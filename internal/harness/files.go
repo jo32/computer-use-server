@@ -16,18 +16,33 @@ import (
 const MaxFileBytes = 1024 * 1024
 
 // os.Root resolves every operation beneath an open directory handle, including symlinks.
-type Files struct{ root *os.Root }
+type Files struct {
+	root     *os.Root
+	Projects *Projects
+}
 
 func NewFiles(path string) (*Files, error) {
 	root, err := os.OpenRoot(path)
 	return &Files{root: root}, err
 }
 func (f *Files) Close() error { return f.root.Close() }
+func (f *Files) resolve(project, path string) (*os.Root, string, func(), error) {
+	if f.Projects != nil {
+		return f.Projects.Resolve(project, path)
+	}
+	if project != "" {
+		return nil, "", nil, errors.New("projects unavailable")
+	}
+	if err := pathOK(path); err != nil {
+		return nil, "", nil, err
+	}
+	return f.root, path, func() {}, nil
+}
 func (f *Files) Register(r *Registry) {
-	r.Register(Tool{Spec: Spec{Name: "read_file", Category: "files", Description: "Read a workspace-relative file, optionally by 1-based inclusive line range. Set encoding=base64 for binary data. At most 1 MiB is returned.", Parallel: true, InputSchema: Schema(map[string]any{"path": Prop("string", "Workspace-relative path"), "start_line": Prop("integer", "First line, default 1"), "end_line": Prop("integer", "Last line, inclusive"), "encoding": Prop("string", "utf8 or base64")}, "path")}, Run: f.read})
-	r.Register(Tool{Spec: Spec{Name: "write_file", Category: "files", Description: "Atomically write a file within the workspace. Creates parent directories. Never follows paths outside the workspace.", Mutating: true, InputSchema: Schema(map[string]any{"path": Prop("string", "Workspace-relative path"), "content": Prop("string", "Text or base64 content"), "encoding": Prop("string", "utf8 or base64")}, "path", "content")}, Run: f.write})
-	r.Register(Tool{Spec: Spec{Name: "list_directory", Category: "files", Description: "List up to 1000 immediate children of a workspace directory, including size and modification time.", Parallel: true, InputSchema: Schema(map[string]any{"path": Prop("string", "Workspace-relative directory, default .")})}, Run: f.list})
-	r.Register(Tool{Spec: Spec{Name: "search_files", Category: "files", Description: "Search text literally in workspace files. Skips symlinks, .git, node_modules and binary files. Returns at most 200 matching lines.", Parallel: true, InputSchema: Schema(map[string]any{"path": Prop("string", "Workspace-relative directory, default ."), "query": Prop("string", "Literal text to find")}, "query")}, Run: f.search})
+	r.Register(Tool{Spec: Spec{Name: "read_file", Category: "files", Description: "Read a project-relative file, optionally by 1-based inclusive line range. Set encoding=base64 for binary data. At most 1 MiB is returned.", Parallel: true, InputSchema: Schema(map[string]any{"project": Prop("string", "Project ID from list_projects; defaults to active project"), "path": Prop("string", "Project-relative or permitted absolute path"), "start_line": Prop("integer", "First line, default 1"), "end_line": Prop("integer", "Last line, inclusive"), "encoding": Prop("string", "utf8 or base64")}, "path")}, Run: f.read})
+	r.Register(Tool{Spec: Spec{Name: "write_file", Category: "files", Description: "Atomically write a file in an approved project, or any current-user accessible directory with Full Access. Creates parent directories.", Mutating: true, InputSchema: Schema(map[string]any{"project": Prop("string", "Project ID from list_projects; defaults to active project"), "path": Prop("string", "Project-relative or permitted absolute path"), "content": Prop("string", "Text or base64 content"), "encoding": Prop("string", "utf8 or base64")}, "path", "content")}, Run: f.write})
+	r.Register(Tool{Spec: Spec{Name: "list_directory", Category: "files", Description: "List up to 1000 immediate children of a permitted directory, including size and modification time.", Parallel: true, InputSchema: Schema(map[string]any{"project": Prop("string", "Project ID from list_projects; defaults to active project"), "path": Prop("string", "Project-relative or permitted absolute directory, default .")})}, Run: f.list})
+	r.Register(Tool{Spec: Spec{Name: "search_files", Category: "files", Description: "Search text literally in permitted files. Skips symlinks, .git, node_modules and binary files. Returns at most 200 matching lines.", Parallel: true, InputSchema: Schema(map[string]any{"project": Prop("string", "Project ID from list_projects; defaults to active project"), "path": Prop("string", "Project-relative or permitted absolute directory, default ."), "query": Prop("string", "Literal text to find")}, "query")}, Run: f.search})
 }
 func pathOK(p string) error {
 	if p == "" || filepath.IsAbs(p) || !filepath.IsLocal(p) {
@@ -38,6 +53,7 @@ func pathOK(p string) error {
 func (f *Files) read(ctx context.Context, in Invocation) (Output, error) {
 	var a struct {
 		Path     string `json:"path"`
+		Project  string `json:"project"`
 		Start    int    `json:"start_line"`
 		End      int    `json:"end_line"`
 		Encoding string `json:"encoding"`
@@ -45,16 +61,19 @@ func (f *Files) read(ctx context.Context, in Invocation) (Output, error) {
 	if err := Decode(in.Arguments, &a); err != nil {
 		return Output{}, err
 	}
-	if err := pathOK(a.Path); err != nil {
+	root, path, release, err := f.resolve(a.Project, a.Path)
+	if err != nil {
 		return Output{}, err
 	}
+	defer release()
+	a.Path = path
 	if a.Start < 0 || a.End < 0 || a.End > 0 && a.End < a.Start {
 		return Output{}, errors.New("invalid line range")
 	}
 	if a.Encoding != "" && a.Encoding != "utf8" && a.Encoding != "base64" {
 		return Output{}, errors.New("encoding must be utf8 or base64")
 	}
-	file, err := openRead(f.root, a.Path)
+	file, err := openRead(root, a.Path)
 	if err != nil {
 		return Output{}, err
 	}
@@ -101,16 +120,19 @@ func (f *Files) read(ctx context.Context, in Invocation) (Output, error) {
 			content = strings.Join(lines[start:end], "\n")
 		}
 	}
-	return Output{Value: map[string]any{"content": content, "size": info.Size(), "truncated": truncated, "encoding": a.Encoding}}, ctx.Err()
+	return Output{Value: map[string]any{"resolved_path": filepath.Join(root.Name(), a.Path), "content": content, "size": info.Size(), "truncated": truncated, "encoding": a.Encoding}}, ctx.Err()
 }
 func (f *Files) write(ctx context.Context, in Invocation) (Output, error) {
-	var a struct{ Path, Content, Encoding string }
+	var a struct{ Path, Project, Content, Encoding string }
 	if err := json.Unmarshal(in.Arguments, &a); err != nil {
 		return Output{}, err
 	}
-	if err := pathOK(a.Path); err != nil {
+	root, path, release, err := f.resolve(a.Project, a.Path)
+	if err != nil {
 		return Output{}, err
 	}
+	defer release()
+	a.Path = path
 	if a.Encoding != "" && a.Encoding != "utf8" && a.Encoding != "base64" {
 		return Output{}, errors.New("invalid encoding")
 	}
@@ -126,15 +148,15 @@ func (f *Files) write(ctx context.Context, in Invocation) (Output, error) {
 		return Output{}, errors.New("file exceeds 1 MiB")
 	}
 	dir := filepath.Dir(a.Path)
-	if err := f.root.MkdirAll(dir, 0755); err != nil {
+	if err := root.MkdirAll(dir, 0755); err != nil {
 		return Output{}, err
 	}
 	temp := filepath.Join(dir, ".adapter-"+ID())
-	out, err := f.root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	out, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return Output{}, err
 	}
-	defer f.root.Remove(temp)
+	defer root.Remove(temp)
 	_, err = out.Write(b)
 	if err == nil {
 		err = out.Sync()
@@ -149,23 +171,26 @@ func (f *Files) write(ctx context.Context, in Invocation) (Output, error) {
 	if err = ctx.Err(); err != nil {
 		return Output{}, err
 	}
-	if err = f.root.Rename(temp, a.Path); err != nil {
+	if err = root.Rename(temp, a.Path); err != nil {
 		return Output{}, err
 	}
-	return Output{Value: map[string]any{"path": a.Path, "bytes_written": len(b)}}, nil
+	return Output{Value: map[string]any{"path": a.Path, "resolved_path": filepath.Join(root.Name(), a.Path), "bytes_written": len(b)}}, nil
 }
 func (f *Files) list(ctx context.Context, in Invocation) (Output, error) {
-	var a struct{ Path string }
+	var a struct{ Path, Project string }
 	if err := json.Unmarshal(in.Arguments, &a); err != nil {
 		return Output{}, err
 	}
 	if a.Path == "" {
 		a.Path = "."
 	}
-	if err := pathOK(a.Path); err != nil {
+	root, path, release, err := f.resolve(a.Project, a.Path)
+	if err != nil {
 		return Output{}, err
 	}
-	file, err := f.root.Open(a.Path)
+	defer release()
+	a.Path = path
+	file, err := root.Open(a.Path)
 	if err != nil {
 		return Output{}, err
 	}
@@ -186,19 +211,22 @@ func (f *Files) list(ctx context.Context, in Invocation) (Output, error) {
 		}
 		out = append(out, map[string]any{"name": entry.Name(), "directory": entry.IsDir(), "size": info.Size(), "modified": info.ModTime(), "symlink": entry.Type()&os.ModeSymlink != 0})
 	}
-	return Output{Value: map[string]any{"entries": out, "truncated": cut}}, ctx.Err()
+	return Output{Value: map[string]any{"resolved_path": filepath.Join(root.Name(), a.Path), "entries": out, "truncated": cut}}, ctx.Err()
 }
 func (f *Files) search(ctx context.Context, in Invocation) (Output, error) {
-	var a struct{ Path, Query string }
+	var a struct{ Path, Project, Query string }
 	if err := json.Unmarshal(in.Arguments, &a); err != nil {
 		return Output{}, err
 	}
 	if a.Path == "" {
 		a.Path = "."
 	}
-	if err := pathOK(a.Path); err != nil {
+	root, path, release, err := f.resolve(a.Project, a.Path)
+	if err != nil {
 		return Output{}, err
 	}
+	defer release()
+	a.Path = path
 	if a.Query == "" {
 		return Output{}, errors.New("query is required")
 	}
@@ -214,7 +242,7 @@ func (f *Files) search(ctx context.Context, in Invocation) (Output, error) {
 			cut = true
 			return nil
 		}
-		d, err := f.root.Open(dir)
+		d, err := root.Open(dir)
 		if err != nil {
 			return err
 		}
@@ -251,7 +279,7 @@ func (f *Files) search(ctx context.Context, in Invocation) (Output, error) {
 			if e != nil || !info.Mode().IsRegular() || info.Size() > MaxFileBytes {
 				continue
 			}
-			file, e := openRead(f.root, path)
+			file, e := openRead(root, path)
 			if e != nil {
 				continue
 			}
@@ -275,5 +303,5 @@ func (f *Files) search(ctx context.Context, in Invocation) (Output, error) {
 	if err := walk(a.Path, 0); err != nil {
 		return Output{}, fmt.Errorf("search: %w", err)
 	}
-	return Output{Value: map[string]any{"matches": out, "truncated": cut, "scanned": scanned}}, nil
+	return Output{Value: map[string]any{"resolved_path": filepath.Join(root.Name(), a.Path), "matches": out, "truncated": cut, "scanned": scanned}}, nil
 }

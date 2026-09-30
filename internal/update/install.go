@@ -16,7 +16,7 @@ import (
 )
 
 func (u *Manager) stageRelease(ctx context.Context, rel *Release) (staged, dir string, err error) {
-	a, ok := rel.Assets[u.asset]
+	_, a, ok := u.releaseAsset(rel)
 	if !ok {
 		return "", "", fmt.Errorf("release %s has no %s", rel.Version, u.asset)
 	}
@@ -27,7 +27,7 @@ func (u *Manager) stageRelease(ctx context.Context, rel *Release) (staged, dir s
 	if a.Size <= 0 || a.Size > maxDownload {
 		return "", "", errors.New("release asset size is invalid or exceeds 512 MiB")
 	}
-	dir, err = os.MkdirTemp(filepath.Dir(u.target), ".relay-update-*")
+	dir, err = os.MkdirTemp(filepath.Dir(u.target), ".readyrig-update-*")
 	if err != nil {
 		return "", "", err
 	}
@@ -61,7 +61,16 @@ func (u *Manager) stageRelease(ctx context.Context, rel *Release) (staged, dir s
 	if err = unzip(path, out); err != nil {
 		return "", dir, err
 	}
-	staged = filepath.Join(out, "Relay.app")
+	for _, name := range []string{"ReadyRig.app", "Readrig.app", "Relay.app"} {
+		candidate := filepath.Join(out, name)
+		if info, e := os.Stat(candidate); e == nil && info.IsDir() {
+			staged = candidate
+			break
+		}
+	}
+	if staged == "" {
+		return "", dir, errors.New("update contains no ReadyRig app bundle")
+	}
 	if err = verifyBundle(ctx, u.target, staged); err != nil {
 		return "", dir, err
 	}
@@ -129,7 +138,7 @@ func (u *Manager) download(ctx context.Context, a Asset, path string) (err error
 }
 
 // Reject traversal, symlinks and special files before writing any archive entry.
-// Relay's self-contained app bundle contains only directories and regular files.
+// ReadyRig's self-contained app bundle contains only directories and regular files.
 func unzip(src, dst string) error {
 	z, err := zip.OpenReader(src)
 	if err != nil {
@@ -189,9 +198,8 @@ func unzip(src, dst string) error {
 }
 
 func verifyBundle(ctx context.Context, installed, staged string) error {
-	exe := filepath.Join(staged, "Contents", "MacOS", "relay")
-	if f, err := os.Stat(exe); err != nil || !f.Mode().IsRegular() || f.Mode()&0111 == 0 {
-		return errors.New("update contains no executable Relay app")
+	if _, err := bundleExecutable(staged); err != nil {
+		return err
 	}
 	if b, err := exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "--deep", "--strict", staged).CombinedOutput(); err != nil {
 		return fmt.Errorf("update signature verification failed: %s", strings.TrimSpace(string(b)))
@@ -226,10 +234,22 @@ func verifyBundle(ctx context.Context, installed, staged string) error {
 	return nil
 }
 
+// Only known executable names are accepted; archive and signature checks still
+// apply equally to current and legacy bundles.
+func bundleExecutable(bundle string) (string, error) {
+	for _, name := range []string{"readyrig", "readrig", "relay"} {
+		path := filepath.Join(bundle, "Contents", "MacOS", name)
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+			return path, nil
+		}
+	}
+	return "", errors.New("update contains no executable ReadyRig app")
+}
+
 // Move the original aside and roll it back if the second rename fails. Both
 // paths live on the same volume. Never delete a backup when rollback fails.
 func swap(staged, target string) error {
-	dir, err := os.MkdirTemp(filepath.Dir(target), ".relay-backup-*")
+	dir, err := os.MkdirTemp(filepath.Dir(target), ".readyrig-backup-*")
 	if err != nil {
 		return err
 	}

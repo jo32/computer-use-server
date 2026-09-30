@@ -5,9 +5,9 @@ LDFLAGS = -X computer-use-server/internal/buildinfo.Version=$(VERSION) -X comput
 
 .PHONY: build cli test run web app release
 build:
-	MACOSX_DEPLOYMENT_TARGET=12.0 go build -ldflags '$(LDFLAGS)' -o bin/relay ./cmd/adapter
+	MACOSX_DEPLOYMENT_TARGET=12.0 go build -ldflags '$(LDFLAGS)' -o bin/readyrig ./cmd/adapter
 cli:
-	go build -tags nogui -ldflags '$(LDFLAGS)' -o bin/relay-web ./cmd/adapter
+	go build -tags nogui -ldflags '$(LDFLAGS)' -o bin/readyrig-web ./cmd/adapter
 test:
 	go test -race -tags nogui ./...
 run:

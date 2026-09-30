@@ -70,7 +70,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		s.sessions[id] = mcpSession{Client: p.ClientInfo.Name, At: time.Now()}
 		s.mu.Unlock()
 		w.Header().Set("Mcp-Session-Id", id)
-		reply(map[string]any{"protocolVersion": version, "serverInfo": map[string]string{"name": "local-agent-adapter", "version": "0.4.0"}, "capabilities": map[string]any{"tools": map[string]bool{"listChanged": false}}, "instructions": "Use tools/list to discover tools, or call help with {} for currently available tools and complete parameter definitions. Call help with name for one tool, or include_disabled=true to inspect blocked tools. Permissions are controlled from the local dashboard. Always capture a fresh screenshot before coordinate actions. exec_command executes on the host without an OS sandbox."})
+		reply(map[string]any{"protocolVersion": version, "serverInfo": map[string]string{"name": "ReadyRig", "version": "0.4.0"}, "capabilities": map[string]any{"tools": map[string]bool{"listChanged": false}}, "instructions": "Use tools/list to discover tools, or call help with {} for currently available tools and complete parameter definitions. Call help with name for one tool, or include_disabled=true to inspect blocked tools. Permissions are controlled from the local dashboard. Always capture a fresh screenshot before coordinate actions. exec_command executes on the host without an OS sandbox."})
 		return
 	}
 	sid := r.Header.Get("Mcp-Session-Id")
@@ -139,5 +139,5 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 	for _, tool := range s.Registry.Specs() {
 		paths["/api/v1/tools/"+tool.Name] = map[string]any{"post": map[string]any{"operationId": tool.Name, "summary": tool.Description, "tags": []string{tool.Category}, "parameters": []map[string]any{{"name": "X-Session-ID", "in": "header", "schema": map[string]string{"type": "string"}}}, "requestBody": map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{"schema": tool.InputSchema}}}, "responses": map[string]any{"200": map[string]any{"description": "Tool result, call_id and status"}, "422": map[string]any{"description": "Tool error"}, "423": map[string]any{"description": "Capability disabled or paused"}}}}
 	}
-	write(w, map[string]any{"openapi": "3.1.0", "info": map[string]string{"title": "Local Agent Adapter", "version": "0.4.0"}, "paths": paths, "servers": []map[string]string{{"url": "/" + s.AccessPath, "description": "Current run access path; regenerated on restart"}}})
+	write(w, map[string]any{"openapi": "3.1.0", "info": map[string]string{"title": "ReadyRig Local Agent Adapter", "version": "0.4.0"}, "paths": paths, "servers": []map[string]string{{"url": "/" + s.requestAccessPath(r), "description": "Access path for this connection"}}})
 }

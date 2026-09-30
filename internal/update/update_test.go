@@ -42,7 +42,7 @@ func TestVersions(t *testing.T) {
 func digest(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
 func testTarget(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "relay")
+	path := filepath.Join(t.TempDir(), "readyrig")
 	if err := os.WriteFile(path, []byte("old"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestChangedInstallationNotOverwritten(t *testing.T) {
 }
 
 func TestArchiveRejectsUnsafePaths(t *testing.T) {
-	for _, name := range []string{"../escape", "/absolute", "Relay.app/../../escape", `Relay.app\evil`, "Relay.app/link"} {
+	for _, name := range []string{"../escape", "/absolute", "ReadyRig.app/../../escape", `ReadyRig.app\evil`, "ReadyRig.app/link"} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "app.zip")
 			f, _ := os.Create(path)
@@ -258,7 +258,7 @@ func TestGitHubPrivateAssetsAndChecksums(t *testing.T) {
 	if r.Version != "1.2.3" || r.Assets[u.asset].SHA256 != sum || !strings.Contains(r.Assets[u.asset].URL, "api.github.com") {
 		t.Fatalf("%+v", r)
 	}
-	t.Setenv("RELAY_UPDATE_TOKEN", "test-private-token")
+	t.Setenv("READYRIG_UPDATE_TOKEN", "test-private-token")
 	for _, raw := range []string{"https://api.github.com/repos/o/r/releases/assets/1", "https://github.com/o/r", "http://127.0.0.1/file", "https://api.github.com.evil.test/"} {
 		req, _ := http.NewRequest("GET", raw, nil)
 		u.authorize(req)
@@ -283,9 +283,9 @@ func TestMacBundleVerification(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS codesign")
 	}
-	makeApp := func(name, id string) string {
+	makeApp := func(name, executable, id string) string {
 		dir := filepath.Join(t.TempDir(), name+".app")
-		exe := filepath.Join(dir, "Contents", "MacOS", "relay")
+		exe := filepath.Join(dir, "Contents", "MacOS", executable)
 		os.MkdirAll(filepath.Dir(exe), 0755)
 		// A real Mach-O executable gives codesign something meaningful to verify.
 		body, err := os.ReadFile("/usr/bin/true")
@@ -293,21 +293,24 @@ func TestMacBundleVerification(t *testing.T) {
 			t.Fatal(err)
 		}
 		os.WriteFile(exe, body, 0755)
-		plist := fmt.Sprintf(`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>%s</string><key>CFBundleExecutable</key><string>relay</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`, id)
+		plist := fmt.Sprintf(`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>%s</string><key>CFBundleExecutable</key><string>%s</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`, id, executable)
 		os.WriteFile(filepath.Join(dir, "Contents", "Info.plist"), []byte(plist), 0644)
 		if out, err := exec.Command("/usr/bin/codesign", "--force", "--sign", "-", dir).CombinedOutput(); err != nil {
 			t.Fatalf("%v: %s", err, out)
 		}
 		return dir
 	}
-	old := makeApp("Relay", "dev.local.relay")
-	fresh := makeApp("Relay", "dev.local.relay")
+	old := makeApp("Readrig", "readrig", "dev.local.relay")
+	fresh := makeApp("ReadyRig", "readyrig", "dev.local.relay")
 	if err := verifyBundle(context.Background(), old, fresh); err != nil {
 		t.Fatal(err)
 	}
+	if path, err := bundleExecutable(fresh); err != nil || filepath.Base(path) != "readyrig" {
+		t.Fatal("renamed bundle would restart the old executable", path, err)
+	}
 	// Use a real ditto archive, including its AppleDouble metadata, so a
 	// download cannot pass its hash and then fail signing after extraction.
-	archive := filepath.Join(t.TempDir(), "Relay.zip")
+	archive := filepath.Join(t.TempDir(), "ReadyRig.zip")
 	if out, err := exec.Command("/usr/bin/ditto", "-c", "-k", "--keepParent", fresh, archive).CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
@@ -315,14 +318,14 @@ func TestMacBundleVerification(t *testing.T) {
 	if err := unzip(archive, extracted); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyBundle(context.Background(), old, filepath.Join(extracted, "Relay.app")); err != nil {
+	if err := verifyBundle(context.Background(), old, filepath.Join(extracted, "ReadyRig.app")); err != nil {
 		t.Fatal("signed bundle failed archive round trip:", err)
 	}
-	wrong := makeApp("Relay", "dev.other.app")
+	wrong := makeApp("ReadyRig", "readyrig", "dev.other.app")
 	if err := verifyBundle(context.Background(), old, wrong); err == nil {
 		t.Fatal("wrong bundle accepted")
 	}
-	exe := filepath.Join(fresh, "Contents", "MacOS", "relay")
+	exe := filepath.Join(fresh, "Contents", "MacOS", "readyrig")
 	f, _ := os.OpenFile(exe, os.O_WRONLY|os.O_APPEND, 0)
 	f.WriteString("tampered")
 	f.Close()

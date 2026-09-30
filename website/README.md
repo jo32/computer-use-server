@@ -1,6 +1,6 @@
 # ReadyRig 官网
 
-与 ReadyRig 桌面控制台保持相同的灰白 / 深色主题、分段导航、细边框和列表样式。独立的 React + TypeScript + Vite 项目，输出静态网站，可在 Vercel 发布。
+与 ReadyRig 桌面控制台保持相同的灰白 / 深色主题、分段导航、细边框和列表样式。React + TypeScript + Vite 项目；官网与 `/console` 设备控制台一起部署到 Cloudflare Workers，账号、心跳和命令使用 D1。部署与 Google 登录配置见 [cloud/README.md](../cloud/README.md)。
 
 ## 本地开发
 
@@ -20,24 +20,17 @@ npm run build     # 同步图标、检查类型、构建到 dist/
 npm run preview   # 预览发布构建：http://127.0.0.1:4173
 ```
 
-## 在 Vercel 发布
+## 正式域名与迁移
 
-正式官网：https://readyrig.vercel.app 。Vercel 项目为 `jo32s-projects/readyrig`，已连接此仓库，生产分支为 `main`，根目录为 `website`。推送官网更新后自动部署。
+官网：https://readyrig.getmegaportal.com 。控制台：https://readyrig.getmegaportal.com/console 。正式域名绑定到 `readyrig-cloud` Worker，Cloudflare 提供静态官网、Google 登录、设备管理 API 与 D1。
 
-1. 导入此 Git 仓库，设置 **Root Directory** 为 `website`。
-2. Framework Preset 选择 **Vite**，Node.js 选择 **24.x**。
-3. Build Command 为 `npm run build`，Output Directory 为 `dist`，Install Command 为 `npm ci`。
-4. 如需公开下载，配置下方的下载地址，然后发布。
+原 Vercel 项目 `readyrig` 已下线并停止 Git 自动部署；原自定义域名的 Vercel 绑定已移除。保留原项目和部署记录供恢复对照，`vercel.json` 仅是旧配置，不用于现有发布。使用 `cd ../cloud && npm run deploy` 发布官网与控制台。
 
-建议开启 **Include source files outside of the Root Directory in the Build Step**，让构建可以读取 App 的图标源文件；如希望 App 图标变更也自动触发官网部署，需确保 Ignored Build Step 不跳过此类提交。即使未开启，官网也能使用已提交的 `public/brand/` 资源独立构建。
-
-目录内的 `vercel.json` 已包含构建设置和静态资源缓存规则。无需 Go 后端、数据库或服务端凭据，也不需要改动桌面 App 的发布流程。
-
-参考：[Vercel 的 Vite 部署文档](https://vercel.com/docs/frameworks/frontend/vite)。
+原 `https://readyrig-cloud.megaportal.workers.dev` 网页访问会跳转到正式域名；该地址上的设备接口继续接受已绑定 app 的心跳和回执。
 
 ## 下载与链接
 
-复制 `.env.example` 为 `.env.local`，或在 Vercel 项目中配置同名变量：
+复制 `.env.example` 为 `.env.local`，配置网站构建使用的变量：
 
 | 变量 | 用途 |
 | --- | --- |
@@ -48,7 +41,7 @@ npm run preview   # 预览发布构建：http://127.0.0.1:4173
 | `VITE_DOCS_URL` | 接入文档 |
 | `VITE_RELEASES_REQUIRE_ACCESS` | 默认为 `false`；仅私有版本页面设为 `true` |
 
-仓库已公开。未配置安装包地址时，按钮打开公开的 GitHub Releases。配好安装包地址后，对应处理器的按钮自动切换为「下载 macOS 版」。`VITE_*` 都会打包进网页，只填写公开 URL，不能放 token 等凭据。修改后需要重新构建。
+仓库已公开。默认下载地址对应 GitHub Releases 最新正式版本的 Apple Silicon 与 Intel 安装包；也可通过变量覆盖为其他公开安装包地址。`VITE_*` 都会打包进网页，只填写公开 URL，不能放 token 等凭据。修改后需要重新构建。
 
 ## 图标同步
 
@@ -90,3 +83,11 @@ GitHub 仓库链接使用 [GitHub 官方品牌资源](https://brand.github.com/f
 接入说明按产品作者的实测反馈编写：Cue 和 WorkBuddy 网页版直接粘贴 App 生成的 Prompt；Gemini Spark 需要配置远程 MCP。`src/components/PlatformDemo.tsx` 提供三个平台的接入、执行、结果演示，使用示例数据，不连接外部服务，也不是第三方产品真实界面的录屏。
 
 分享说明应始终与实际权限一致：完整链接就是访问凭据，持有者可调用已启用工具并查看日志 / 截图；多个接入者共用同一套权限，没有按用户隔离。终端使用当前用户权限，浏览器与桌面可触及已登录应用；文件工具的项目目录限制不是系统沙箱。执行记录保存在本机不意味着工具结果不传到云端。关闭公网入口不会自动取消已运行的命令。
+
+## 多语言
+
+官网、交互演示与网页设备控制台支持简体中文和英文。右上角可选择「跟随系统 / 简体中文 / English」，手动选择会保存在当前浏览器，刷新或跨页面访问后仍然生效。首次打开会按浏览器语言顺序选择支持的语言，没有匹配时使用英文。也可用 `?lang=en` 或 `?lang=zh-CN` 打开指定语言。
+
+语言识别与插值位于 `src/locale.ts`，React 状态与页面元数据位于 `src/i18n.tsx`，英文文案集中在 `src/locales/en.json`。中文原文作为翻译键；示例数据随语言切换，实际用户内容保持原样。新增界面文案需要加入词典。
+
+运行 `npm test` 验证语言识别、偏好保存、占位参数、文案覆盖和 App 接入 Prompt。App 对应词典位于 `../internal/server/assets/locales/en.js`；原生菜单与系统对话框的词典位于 `../internal/i18n/en.json`，测试会检查两端文案一致。

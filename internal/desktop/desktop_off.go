@@ -11,6 +11,6 @@ import (
 
 const Available = false
 
-func Run(http.Handler, *harness.Registry, *update.Manager, func()) error {
+func Run(http.Handler, *harness.Registry, *update.Manager, func(), string) error {
 	return fmt.Errorf("this is a headless build; use the web subcommand")
 }

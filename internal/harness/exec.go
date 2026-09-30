@@ -58,15 +58,17 @@ type process struct {
 	done           chan struct{}
 	cancel         context.CancelFunc
 	session        string
+	cwd            string
 	code           int
 	timedOut       bool
 	cancelled      bool
 	ended          time.Time
 }
 type Processes struct {
-	mu    sync.Mutex
-	items map[string]*process
-	root  string
+	mu       sync.Mutex
+	items    map[string]*process
+	root     string
+	Projects *Projects
 }
 
 func NewProcesses(root string) *Processes {
@@ -83,15 +85,15 @@ func (p *Processes) Stop() {
 	p.mu.Unlock()
 }
 func (p *Processes) Register(r *Registry) {
-	r.Register(Tool{Spec: Spec{Name: "exec_command", Category: "terminal", Description: "Run a host shell command. This is NOT an OS sandbox. cwd is workspace-relative. Returns a process session_id if still running after yield_time_ms; use write_stdin to poll or provide stdin. Output is capped at 1 MiB per stream. Default timeout 60 s; maximum 600 s. No PTY.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"command": Prop("string", "Shell command"), "cwd": Prop("string", "Workspace-relative directory"), "timeout": Prop("integer", "Seconds, default 60, max 600"), "yield_time_ms": Prop("integer", "Initial wait, default 1000, max 10000"), "env": Prop("object", "Additional environment variables")}, "command")}, Run: p.start})
+	r.Register(Tool{Spec: Spec{Name: "exec_command", Category: "terminal", Description: "Run a host shell command. This is NOT an OS sandbox. cwd is project-relative or a permitted absolute path; project defaults to the active project. Returns a process session_id if still running after yield_time_ms; use write_stdin to poll or provide stdin. Output is capped at 1 MiB per stream. Default timeout 60 s; maximum 600 s. No PTY.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"command": Prop("string", "Shell command"), "project": Prop("string", "Project ID from list_projects; defaults to active project"), "cwd": Prop("string", "Project-relative or permitted absolute directory"), "timeout": Prop("integer", "Seconds, default 60, max 600"), "yield_time_ms": Prop("integer", "Initial wait, default 1000, max 10000"), "env": Prop("object", "Additional environment variables")}, "command")}, Run: p.start})
 	r.Register(Tool{Spec: Spec{Name: "write_stdin", Category: "terminal", Description: "Write to or poll a running command owned by this session. Empty chars polls. terminate=true cancels the process group. close_stdin=true signals EOF. Only unread output is returned.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"session_id": Prop("string", "Process session_id from exec_command"), "chars": Prop("string", "Input bytes"), "yield_time_ms": Prop("integer", "Wait duration, default 1000, max 10000"), "terminate": Prop("boolean", "Cancel process"), "close_stdin": Prop("boolean", "Close stdin")}, "session_id")}, Run: p.input})
 }
 func (p *Processes) start(ctx context.Context, in Invocation) (Output, error) {
 	var a struct {
-		Command, Cwd string
-		Timeout      int
-		Yield        int `json:"yield_time_ms"`
-		Env          map[string]string
+		Command, Cwd, Project string
+		Timeout               int
+		Yield                 int `json:"yield_time_ms"`
+		Env                   map[string]string
 	}
 	if err := json.Unmarshal(in.Arguments, &a); err != nil {
 		return Output{}, err
@@ -108,16 +110,26 @@ func (p *Processes) start(ctx context.Context, in Invocation) (Output, error) {
 	if a.Cwd == "" {
 		a.Cwd = "."
 	}
-	if err := pathOK(a.Cwd); err != nil {
-		return Output{}, err
+	var cwd string
+	var err error
+	if p.Projects != nil {
+		cwd, err = p.Projects.Directory(a.Project, a.Cwd)
+	} else {
+		if a.Project != "" {
+			return Output{}, errors.New("projects unavailable")
+		}
+		if err = pathOK(a.Cwd); err == nil {
+			cwd, err = filepath.EvalSymlinks(filepath.Join(p.root, a.Cwd))
+			if err == nil {
+				rel, e := filepath.Rel(p.root, cwd)
+				if e != nil || !filepath.IsLocal(rel) {
+					err = errors.New("cwd escapes workspace")
+				}
+			}
+		}
 	}
-	cwd, err := filepath.EvalSymlinks(filepath.Join(p.root, a.Cwd))
 	if err != nil {
 		return Output{}, err
-	}
-	rel, err := filepath.Rel(p.root, cwd)
-	if err != nil || !filepath.IsLocal(rel) {
-		return Output{}, errors.New("cwd escapes workspace")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -137,7 +149,7 @@ func (p *Processes) start(ctx context.Context, in Invocation) (Output, error) {
 		return Output{}, err
 	}
 	processCtx, cancel := context.WithTimeout(context.Background(), time.Duration(a.Timeout)*time.Second)
-	pr := &process{done: make(chan struct{}), cancel: cancel, session: in.Session}
+	pr := &process{done: make(chan struct{}), cancel: cancel, session: in.Session, cwd: cwd}
 	cmd := exec.CommandContext(processCtx, "/bin/sh", "-c", a.Command)
 	cmd.Dir = cwd
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LANG=en_US.UTF-8", "DEBIAN_FRONTEND=noninteractive", "TERM=dumb"}
@@ -263,7 +275,7 @@ func poll(ctx context.Context, pr *process, id string, yield int) (Output, error
 	}
 	stdout, a := pr.stdout.Drain()
 	stderr, b := pr.stderr.Drain()
-	value := map[string]any{"stdout": stdout, "stderr": stderr, "truncated": a || b, "session_id": id, "running": !finished}
+	value := map[string]any{"cwd": pr.cwd, "stdout": stdout, "stderr": stderr, "truncated": a || b, "session_id": id, "running": !finished}
 	if finished {
 		value["exit_code"] = pr.code
 		value["timed_out"] = pr.timedOut
@@ -281,7 +293,7 @@ func poll(ctx context.Context, pr *process, id string, yield int) (Output, error
 func processSnapshot(pr *process, id string) map[string]any {
 	stdout, a := pr.stdout.Snapshot()
 	stderr, b := pr.stderr.Snapshot()
-	value := map[string]any{"stdout": stdout, "stderr": stderr, "truncated": a || b, "session_id": id, "running": true}
+	value := map[string]any{"cwd": pr.cwd, "stdout": stdout, "stderr": stderr, "truncated": a || b, "session_id": id, "running": true}
 	select {
 	case <-pr.done:
 		value["running"] = false

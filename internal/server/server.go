@@ -3,12 +3,15 @@ package server
 import (
 	"computer-use-server/internal/buildinfo"
 	"computer-use-server/internal/chromemcp"
+	"computer-use-server/internal/cloud"
 	"computer-use-server/internal/computer"
 	"computer-use-server/internal/harness"
 	"computer-use-server/internal/store"
+	"computer-use-server/internal/tunnel"
 	"computer-use-server/internal/update"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"embed"
@@ -33,10 +36,13 @@ var assets embed.FS
 
 type Server struct {
 	Registry                                  *harness.Registry
+	Projects                                  *harness.Projects
 	Store                                     *store.Store
 	Computer                                  *computer.Computer
 	Chrome                                    *chromemcp.Bridge
 	Updates                                   *update.Manager
+	Tunnel                                    *tunnel.Manager
+	Cloud                                     *cloud.Client
 	Workspace, GatewayAddr, AccessPath, UIKey string
 	AllowedIPs                                []*net.IPNet
 	mu                                        sync.Mutex
@@ -51,7 +57,11 @@ type mcpSession struct {
 
 func (s *Server) Gateway() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/tools", func(w http.ResponseWriter, r *http.Request) { write(w, s.Registry.Specs()) })
+	mux.HandleFunc("GET /api/v1/tools", func(w http.ResponseWriter, r *http.Request) {
+		sum := sha256.Sum256([]byte(s.UIKey + "|" + s.AccessPath))
+		w.Header().Set("X-Readyrig-Instance", fmt.Sprintf("%x", sum[:16]))
+		write(w, s.Registry.Specs())
+	})
 	mux.HandleFunc("POST /api/v1/tools/{name}", s.invoke)
 	for path, name := range map[string]string{"bash/exec": "exec_command", "bash/stdin": "write_stdin", "fs/read": "read_file", "fs/write": "write_file", "fs/list": "list_directory", "fs/search": "search_files", "computer/action": "computer_action", "computer/screenshot": "computer_screenshot"} {
 		name := name
@@ -60,7 +70,17 @@ func (s *Server) Gateway() http.Handler {
 	mux.HandleFunc("GET /api/v1/openapi.json", s.openapi)
 	mux.HandleFunc("POST /mcp", s.mcp)
 	mux.HandleFunc("GET /mcp", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusMethodNotAllowed) })
-	return s.gatewayGuard(http.StripPrefix("/"+s.AccessPath, headers(mux)))
+	mux.Handle("/app/", http.StripPrefix("/app", s.PublicUI()))
+	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			problem(w, 403, fmt.Errorf("公网控制台仅供查看"))
+			return
+		}
+		http.Redirect(w, r, "/"+s.requestAccessPath(r)+"/app/", http.StatusTemporaryRedirect)
+	})
+	return s.gatewayGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.StripPrefix("/"+s.requestAccessPath(r), headers(mux)).ServeHTTP(w, r)
+	}))
 }
 func (s *Server) invoke(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2*1024*1024))
@@ -90,6 +110,9 @@ func (s *Server) invoke(w http.ResponseWriter, r *http.Request) {
 func (s *Server) UI() http.Handler {
 	mux := http.NewServeMux()
 	s.updateRoutes(mux)
+	s.projectRoutes(mux)
+	s.tunnelRoutes(mux)
+	s.cloudRoutes(mux)
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		paused, enabled := s.Registry.State()
 		summary, err := s.Store.Summary()
@@ -106,7 +129,15 @@ func (s *Server) UI() http.Handler {
 		if s.Chrome != nil {
 			chrome = s.Chrome.Status()
 		}
-		write(w, map[string]any{"paused": paused, "enabled": enabled, "summary": summary, "sessions": sessions, "tools": s.Registry.Specs(), "permissions": s.Computer.Permissions(), "workspace": s.Workspace, "gateway": s.GatewayURL(), "gateway_origin": s.GatewayAddr, "version": buildinfo.Version, "chrome": chrome, "update": s.updateStatus()})
+		remote := isPublicUI(r)
+		gateway, origin := s.connection(r)
+		var updates any
+		var cloudState any
+		if !remote {
+			updates = s.updateStatus()
+			cloudState = s.cloudStatus()
+		}
+		write(w, map[string]any{"public": remote, "paused": paused, "enabled": enabled, "summary": summary, "sessions": sessions, "tools": s.Registry.Specs(), "permissions": s.Computer.Permissions(), "workspace": s.activeWorkspace(), "project_access": s.projectState(), "gateway": gateway, "gateway_origin": origin, "version": buildinfo.Version, "chrome": chrome, "update": updates, "cloud": cloudState, "tunnel": s.tunnelStatus(remote)})
 	})
 	mux.HandleFunc("POST /api/chrome/refresh", func(w http.ResponseWriter, r *http.Request) {
 		if s.Chrome != nil {
@@ -188,7 +219,8 @@ func (s *Server) UI() http.Handler {
 	})
 	mux.HandleFunc("POST /api/tools/{name}", s.invoke)
 	mux.HandleFunc("GET /api/connection", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]string{"gateway": s.GatewayURL(), "gateway_origin": s.GatewayAddr})
+		gateway, origin := s.connection(r)
+		write(w, map[string]any{"gateway": gateway, "gateway_origin": origin, "tunnel": s.tunnelStatus(isPublicUI(r))})
 	})
 	mux.HandleFunc("GET /api/export", func(w http.ResponseWriter, r *http.Request) {
 		f := filter(r)
@@ -260,10 +292,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) gatewayGuard(next http.Handler) http.Handler {
 	return headers(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Origin") != "" {
-			problem(w, 403, fmt.Errorf("browser origins are not allowed on the agent gateway"))
-			return
-		}
 		if len(s.AllowedIPs) > 0 {
 			host, _, _ := net.SplitHostPort(r.RemoteAddr)
 			ip := net.ParseIP(host)
@@ -293,7 +321,12 @@ func (s *Server) gatewayGuard(next http.Handler) http.Handler {
 		}
 		// Check the literal first segment before ServeMux can clean or redirect paths.
 		segment, rest, found := strings.Cut(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/")
-		if !validAccessPath(s.AccessPath) || !found || subtle.ConstantTimeCompare([]byte(segment), []byte(s.AccessPath)) != 1 {
+		accepted := validAccessPath(s.AccessPath) && subtle.ConstantTimeCompare([]byte(segment), []byte(s.AccessPath)) == 1
+		if s.Tunnel != nil {
+			fixed := s.Tunnel.FixedAccessPath()
+			accepted = accepted || validAccessPath(fixed) && subtle.ConstantTimeCompare([]byte(segment), []byte(fixed)) == 1
+		}
+		if !found || !accepted {
 			http.NotFound(w, r)
 			return
 		}
@@ -308,7 +341,18 @@ func (s *Server) gatewayGuard(next http.Handler) http.Handler {
 				return
 			}
 		}
-		next.ServeHTTP(w, r)
+		if origin := r.Header.Get("Origin"); origin != "" {
+			// The shared console permits same-origin reads only. Browser requests
+			// to the Agent REST/MCP endpoints remain forbidden.
+			u, err := url.Parse(origin)
+			console := decoded == "app" || strings.HasPrefix(decoded, "app/")
+			read := r.Method == http.MethodGet || r.Method == http.MethodHead
+			if !console || !read || err != nil || u.Host != r.Host || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Scheme != "http" && u.Scheme != "https" {
+				problem(w, 403, fmt.Errorf("browser origins are not allowed on the agent gateway"))
+				return
+			}
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), accessPathKey{}, segment)))
 	}))
 }
 

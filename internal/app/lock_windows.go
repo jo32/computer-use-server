@@ -18,7 +18,7 @@ func lockData(dir string) (func(), error) {
 	err = windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, overlapped)
 	if err != nil {
 		f.Close()
-		return nil, fmt.Errorf("another Relay process is using this data directory: %w", err)
+		return nil, fmt.Errorf("another ReadyRig process is using this data directory: %w", err)
 	}
 	return func() { windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, overlapped); f.Close() }, nil
 }

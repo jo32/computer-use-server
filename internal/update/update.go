@@ -120,7 +120,7 @@ func newAt(o Options, exe string) *Manager {
 			break
 		}
 		if strings.Contains(u.target, "/AppTranslocation/") {
-			u.status.Reason = "请先将 Relay 移到应用程序文件夹"
+			u.status.Reason = "请先将 ReadyRig 移到应用程序文件夹"
 			break
 		}
 		f, err := os.OpenFile(filepath.Join(filepath.Dir(u.target), "."+filepath.Base(u.target)+".update.lock"), os.O_CREATE|os.O_RDWR, 0600)
@@ -130,7 +130,7 @@ func newAt(o Options, exe string) *Manager {
 		}
 		if err = lock(f); err != nil {
 			f.Close()
-			u.status.Reason = "另一个 Relay 进程正在管理更新，请在该进程中操作"
+			u.status.Reason = "另一个 ReadyRig 进程正在管理更新，请在该进程中操作"
 			break
 		}
 		u.lockFile = f
@@ -144,17 +144,27 @@ func newAt(o Options, exe string) *Manager {
 
 func AssetName(goos, arch string, gui, bundle bool) string {
 	if bundle {
-		return "relay-darwin-" + arch + ".zip"
+		return "readyrig-darwin-" + arch + ".zip"
 	}
-	name := "relay-web-"
+	name := "readyrig-web-"
 	if gui {
-		name = "relay-"
+		name = "readyrig-"
 	}
 	name += goos + "-" + arch
 	if goos == "windows" {
 		name += ".exe"
 	}
 	return name
+}
+
+// Older feeds used the previous product names. Always prefer ReadyRig assets.
+func (u *Manager) releaseAsset(rel *Release) (string, Asset, bool) {
+	for _, name := range []string{u.asset, strings.Replace(u.asset, "readyrig-", "readrig-", 1), strings.Replace(u.asset, "readyrig-", "relay-", 1)} {
+		if asset, ok := rel.Assets[name]; ok {
+			return name, asset, true
+		}
+	}
+	return "", Asset{}, false
 }
 
 // HTTPS is required except for loopback feeds used in local release tests.
@@ -334,7 +344,7 @@ func (u *Manager) get(ctx context.Context, raw string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Relay/"+u.status.Current)
+	req.Header.Set("User-Agent", "ReadyRig/"+u.status.Current)
 	u.authorize(req)
 	r, err := u.client.Do(req)
 	if err != nil {
@@ -343,7 +353,7 @@ func (u *Manager) get(ctx context.Context, raw string) (*http.Response, error) {
 	if r.StatusCode != http.StatusOK {
 		r.Body.Close()
 		if req.URL.Host == "api.github.com" && (r.StatusCode == 401 || r.StatusCode == 404) {
-			return nil, errors.New("GitHub 更新不可用：请确认已发布 Release，且 gh auth login 或 RELAY_UPDATE_TOKEN 有权读取仓库")
+			return nil, errors.New("GitHub 更新不可用：请确认已发布 Release，且 gh auth login 或 READYRIG_UPDATE_TOKEN 有权读取仓库")
 		}
 		return nil, fmt.Errorf("update request: %s", r.Status)
 	}
@@ -381,14 +391,22 @@ func (u *Manager) Finish(install bool) (err error) {
 		return e
 	}
 	if u.self == nil || !os.SameFile(u.self, current) || current.Size() != u.self.Size() || !current.ModTime().Equal(u.self.ModTime()) {
-		return errors.New("installation changed while Relay was running; restart before updating")
+		return errors.New("installation changed while ReadyRig was running; restart before updating")
 	}
 	if err = swap(u.stage, u.target); err != nil {
 		return err
 	}
 	if u.restart {
 		cleanup()
-		return Reexec(u.exe, os.Args[1:])
+		exe := u.exe
+		if u.bundle {
+			// An upgrade from Readrig/Relay changes the executable basename.
+			exe, err = bundleExecutable(u.target)
+			if err != nil {
+				return err
+			}
+		}
+		return Reexec(exe, os.Args[1:])
 	}
 	return nil
 }
