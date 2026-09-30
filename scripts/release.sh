@@ -25,7 +25,7 @@ if [ "$(uname -s)" = Darwin ]; then
     CGO_ENABLED=1 GOOS=darwin GOARCH="$arch" MACOSX_DEPLOYMENT_TARGET=12.0 go build -ldflags "$flags" -o bin/relay ./cmd/adapter
     cp bin/relay "$out/relay-darwin-$arch"
     VERSION="$version" sh scripts/package-macos.sh
-    ditto -c -k --keepParent dist/Relay.app "$out/relay-darwin-$arch.zip"
+    ditto -c -k --norsrc --keepParent dist/Relay.app "$out/relay-darwin-$arch.zip"
   done
 fi
 cp internal/update/MAGPIE-LICENSE.txt "$out/MAGPIE-LICENSE.txt"

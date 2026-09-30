@@ -305,6 +305,19 @@ func TestMacBundleVerification(t *testing.T) {
 	if err := verifyBundle(context.Background(), old, fresh); err != nil {
 		t.Fatal(err)
 	}
+	// Use a real ditto archive, including its AppleDouble metadata, so a
+	// download cannot pass its hash and then fail signing after extraction.
+	archive := filepath.Join(t.TempDir(), "Relay.zip")
+	if out, err := exec.Command("/usr/bin/ditto", "-c", "-k", "--keepParent", fresh, archive).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	extracted := t.TempDir()
+	if err := unzip(archive, extracted); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBundle(context.Background(), old, filepath.Join(extracted, "Relay.app")); err != nil {
+		t.Fatal("signed bundle failed archive round trip:", err)
+	}
 	wrong := makeApp("Relay", "dev.other.app")
 	if err := verifyBundle(context.Background(), old, wrong); err == nil {
 		t.Fatal("wrong bundle accepted")

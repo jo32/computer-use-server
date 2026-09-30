@@ -151,6 +151,11 @@ func unzip(src, dst string) error {
 		total += f.UncompressedSize64
 	}
 	for _, f := range z.File {
+		// ditto may store AppleDouble metadata alongside bundle files. These
+		// are not actual resources; materialising them breaks the sealed bundle.
+		if strings.HasPrefix(filepath.Base(f.Name), "._") || strings.HasPrefix(f.Name, "__MACOSX/") {
+			continue
+		}
 		path := filepath.Join(dst, filepath.FromSlash(f.Name))
 		if f.FileInfo().IsDir() {
 			if err = os.MkdirAll(path, 0755); err != nil {
