@@ -1,6 +1,8 @@
 #!/bin/sh
 # Build release assets locally. Publishing is a separate, explicit step.
 set -eu
+mode=${1:---release}
+case "$mode" in --release|--prepare|--finish) ;; *) printf '%s\n' 'Usage: release.sh [--prepare|--finish]' >&2; exit 1;; esac
 : "${VERSION:?Set VERSION to a release version, for example 0.5.0}"
 printf '%s' "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$' || { printf '%s\n' 'VERSION must be a stable x.y.z release' >&2; exit 1; }
 repo=${RELEASE_REPO:-jo32/readyrig}
@@ -8,7 +10,16 @@ printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || exit 1
 version=${VERSION#v}
 out="dist/releases/$version"
 mkdir -p "$out" bin
+if [ "$(uname -s)" = Darwin ]; then
+  : "${SIGN_IDENTITY:?Set SIGN_IDENTITY to your Developer ID Application identity}"
+  export REQUIRE_DEVELOPER_ID=1
+  if [ "$mode" != --prepare ]; then bash scripts/notarize-macos.sh --check-credentials; fi
+  # Check the certificate before building any release artifacts.
+  bash scripts/sign-macos.sh --check-identity
+fi
 flags="-s -w -X computer-use-server/internal/buildinfo.Version=$version -X computer-use-server/internal/buildinfo.ReleaseRepo=$repo"
+apps_dir="$out/.macos-apps"
+if [ "$mode" != --finish ]; then
 for target in darwin linux windows; do
   for arch in amd64 arm64; do
     suffix=''
@@ -17,28 +28,25 @@ for target in darwin linux windows; do
   done
 done
 if [ "$(uname -s)" = Darwin ]; then
+  mkdir -p "$apps_dir"
   native=$(go env GOARCH)
   other=amd64
   if [ "$native" = amd64 ]; then other=arm64; fi
   for arch in "$other" "$native"; do
     CGO_ENABLED=1 GOOS=darwin GOARCH="$arch" MACOSX_DEPLOYMENT_TARGET=12.0 go build -tags nogui -ldflags "$flags" -o "$out/readyrig-web-darwin-$arch" ./cmd/adapter
+    bash scripts/sign-macos.sh "$out/readyrig-web-darwin-$arch" dev.local.relay.web
     CGO_ENABLED=1 GOOS=darwin GOARCH="$arch" MACOSX_DEPLOYMENT_TARGET=12.0 go build -ldflags "$flags" -o bin/readyrig ./cmd/adapter
+    bash scripts/sign-macos.sh bin/readyrig dev.local.relay
     cp bin/readyrig "$out/readyrig-darwin-$arch"
-    VERSION="$version" sh scripts/package-macos.sh
-    ditto -c -k --norsrc --keepParent dist/ReadyRig.app "$out/readyrig-darwin-$arch.zip"
+    VERSION="$version" PACKAGE_OUTPUT_DIR="$apps_dir/$arch" sh scripts/package-macos.sh
     # Previously installed updaters request their old filenames and bundle
     # layouts. Their bridge packages display ReadyRig and retain the signing ID.
-    compat_dir=$(mktemp -d "$out/.compat-XXXXXX")
-    trap 'rm -rf "$compat_dir"' 0
     for legacy in Readrig:readrig Relay:relay; do
       legacy_app=${legacy%:*}
       legacy_executable=${legacy#*:}
       cp bin/readyrig "$out/$legacy_executable-darwin-$arch"
-      VERSION="$version" PACKAGE_APP_NAME="$legacy_app" PACKAGE_EXECUTABLE="$legacy_executable" PACKAGE_OUTPUT_DIR="$compat_dir" sh scripts/package-macos.sh
-      ditto -c -k --norsrc --keepParent "$compat_dir/$legacy_app.app" "$out/$legacy_executable-darwin-$arch.zip"
+      VERSION="$version" PACKAGE_APP_NAME="$legacy_app" PACKAGE_EXECUTABLE="$legacy_executable" PACKAGE_OUTPUT_DIR="$apps_dir/$arch" sh scripts/package-macos.sh
     done
-    rm -rf "$compat_dir"
-    trap - 0
   done
 fi
 # Keep existing CLI installations able to discover the renamed release.
@@ -51,6 +59,21 @@ for target in darwin linux windows; do
     done
   done
 done
+fi
+if [ "$mode" = --prepare ]; then
+  printf '%s\n' "Signed builds prepared in $out; run release.sh --finish to notarize and package"
+  exit 0
+fi
+if [ "$(uname -s)" = Darwin ]; then
+  bash scripts/notarize-macos.sh "$apps_dir" "$out"
+  for arch in arm64 amd64; do
+    for package in ReadyRig:readyrig Readrig:readrig Relay:relay; do
+      app=${package%:*}
+      name=${package#*:}
+      ditto -c -k --keepParent "$apps_dir/$arch/$app.app" "$out/$name-darwin-$arch.zip"
+    done
+  done
+fi
 cp internal/update/MAGPIE-LICENSE.txt "$out/MAGPIE-LICENSE.txt"
 python3 - "$out" <<'PY'
 import hashlib, pathlib, sys

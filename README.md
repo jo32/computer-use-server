@@ -270,7 +270,7 @@ Update management endpoints are local only: `GET /api/update`, `POST /api/update
 - **Logs and credentials:** Per-run random paths stay in memory, and data directories are created with `0700` permissions. Logs redact token/password/secret fields, the current random path, and dashboard key, but cannot identify every secret in free text or images. Treat logs and screenshots as sensitive local data. Logs persist without automatic cleanup or quotas. SQLite records call start and completion; restart marks unfinished calls as `interrupted`. Long-running command output is saved as it changes, and final results are recorded without client polling. Screenshots are stored separately from list summaries.
 - **Shared access:** Holders of an agent URL share one authorization identity. Sessions correlate logs rather than isolate tenants. Writes and clicks are not automatically retried. Turning off public sharing does not itself cancel commands already running.
 - **MCP:** The gateway implements a limited subset without claiming full protocol certification. A disconnect may cancel the current request; check logs before reconnecting and repeating an operation whose outcome is unknown. Quick Tunnel web, REST, and MCP access have been verified; integration with real cloud agent clients remains unverified.
-- **Distribution:** Desktop packages currently use local ad-hoc signing without Developer ID signing, notarization, or an installer. Their update provenance relies on the authenticated GitHub release source and checksums. System permissions may need to be granted again when the build identity changes. Changing signing teams requires a manual installation.
+- **Distribution:** Official Mac releases require Developer ID signing, hardened runtime, a secure timestamp, and Apple notarization. App bundles receive a stapled notarization ticket before packaging. Versions 0.6.0 and earlier used ad-hoc signing; switching from those installations to Developer ID requires one manual installation. Later updates must retain the signing team and bundle ID. System permissions may need to be granted again when the build identity changes.
 
 ## Development and verification
 
@@ -307,7 +307,11 @@ Tests cover file traversal and symlink escape, file operations, validation, reda
 
 `python3 scripts/test-update.py` verifies a real binary update from 0.4.0 to 0.5.0 and restart in a temporary directory, retaining logs and workspace data.
 
-The [release workflow](.github/workflows/release.yml) tests and builds macOS Intel/Apple Silicon desktop packages and macOS/Linux/Windows browser binaries for both architectures, then publishes GitHub Releases when a `vX.Y.Z` tag is pushed. Local `make release` builds without uploading. Set `SIGN_IDENTITY` to select a macOS signing identity.
+The [release workflow](.github/workflows/release.yml) tests and builds macOS Intel/Apple Silicon desktop packages and macOS/Linux/Windows browser binaries for both architectures, then publishes GitHub Releases when a `vX.Y.Z` tag is pushed. Missing Developer ID or notarization credentials stop the release; existing releases are not overwritten. Local `make release` runs the same signing and notarization steps without uploading. Mac app packages and `SHA256SUMS` are generated only after Apple accepts the submission and the bundles pass ticket validation and Gatekeeper assessment.
+
+For local releases, set `SIGN_IDENTITY` to a Developer ID Application name or fingerprint and optionally set `SIGN_KEYCHAIN`. Authenticate notarization with an existing `NOTARY_PROFILE` (and optionally `NOTARY_KEYCHAIN`), or use a team API key through `NOTARY_KEY_PATH`, `NOTARY_KEY_ID`, and `NOTARY_ISSUER_ID`. To build first and notarize later, run `VERSION=0.6.1 sh scripts/release.sh --prepare`, then run `sh scripts/release.sh --finish` with the same version and notarization credentials. Development `make app` builds can still use ad-hoc signing.
+
+CI requires these GitHub Secrets: `MACOS_CERTIFICATE_P12_BASE64`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_NOTARY_KEY_BASE64`, `APPLE_NOTARY_KEY_ID`, and `APPLE_NOTARY_ISSUER_ID`. Signing credentials stay in a temporary keychain and temporary files, are removed afterward, and never enter the repository or release assets.
 
 ## Compatibility
 
