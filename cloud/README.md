@@ -58,6 +58,48 @@ Commands queue in D1 and expire if not retrieved within five minutes. A retrieve
 
 Device credentials are stored only in the private local data directory at `cloud/cloud.json` with `0600` permissions; the cloud stores only their SHA-256 hashes. Credentials do not follow HTTP redirects or get sent to a different service when the launch cloud URL changes. They remain valid until unbinding; web sessions expire after seven days. Unbinding revokes credentials and unfinished commands, but an already active tunnel must be stopped separately. The cloud stores defined device status without uploading local logs, screenshots, project paths, or Tunnel Tokens. Public agent URLs are visible to the device owner. Completed commands are retained for up to 30 days.
 
+## Cloud computer API
+
+Sign in to the console and choose **Copy cloud prompt**. It generates a Bearer credential tied to the current login session and includes it in the prompt. The credential can list and control computers bound to that account, including computers bound later. It expires with that session, and signing out invalidates it. The console keeps a single copy action without a separate Agent access management panel.
+
+![Cloud console with Copy cloud prompt](../docs/readyrig-cloud-prompt.png)
+
+| Endpoint | Authentication | Purpose |
+| --- | --- | --- |
+| `GET /api/v1/prompts?lang=zh-CN` | Public | Generic prompt with a credential placeholder; use `lang=en` for English |
+| `POST /api/discovery-token` with `{}` | Same-origin signed-in browser session | Issue the computer API credential with the session's expiry |
+| `GET /api/v1/computers` | `Authorization: Bearer <token>` | List this account's computers, status, enabled capabilities and public links |
+| `GET /api/v1/computers/{id}` | Same Bearer token | Refresh one computer and its links |
+| `POST /api/v1/computers/{id}/commands` | Same Bearer token | Queue a computer control change |
+| `GET /api/v1/computers/{id}/commands` | Same Bearer token | Read the latest 30 command receipts, including status and errors |
+
+To enable shell access, submit this JSON to the command endpoint:
+
+```json
+{
+  "kind": "capability.set",
+  "payload": { "category": "terminal", "enabled": true },
+  "request_id": "a-new-unique-request-id"
+}
+```
+
+| Command | Payload | Result |
+| --- | --- | --- |
+| `capability.set` | `category`: `files`, `terminal`, `browser` or `computer`; boolean `enabled` | Change a tool capability switch |
+| `tunnel.start` | `mode`: `quick` or `fixed` | Start public sharing; fixed mode uses the computer's saved configuration |
+| `tunnel.stop` | `{}` | Stop public sharing |
+| `control.pause` | Boolean `paused` | Pause or resume tool control |
+
+A submission returns HTTP 202 with `id`, `kind`, `payload`, and `status`. It initially has status `queued`; the computer receives it on its next heartbeat and reports `completed` or `failed`. Poll command receipts for that ID before claiming success. Commands share the console's queue, with at most 20 pending/executing commands. Pending requests expire after five minutes, and unconfirmed execution expires after 90 seconds without automatic redelivery. Offline computers must reconnect to execute requests. Retries use the same `request_id` (at most 64 UTF-8 bytes) and identical command; a conflicting reuse returns 409. An idempotent retry works even if the queue is full.
+
+An online computer with public sharing ready returns `links: { gateway, mcp, console }`. All URLs preserve the existing random access path. Offline computers, sharing that is not ready, and missing/invalid URLs return `links: null`. Refresh the computer after changing sharing, or when a temporary link rotates.
+
+After discovery, the agent calls `POST {links.gateway}/api/v1/tools/help` and `POST {links.gateway}/api/v1/tools/list_projects` with `{}`, then invokes tools directly. A configured MCP client can use `links.mcp`. **Do not send the cloud Bearer token to the computer.** Actual shell execution and other tool calls use the computer's public URL, respecting its capability switches, pause state and project permissions.
+
+Signing out stops future cloud queries and control submissions from that login session. Already accepted commands follow their normal execution/expiry lifecycle; public URLs already retrieved remain valid until sharing stops. Other login sessions and device binding credentials are unaffected. Cookies and device credentials do not authenticate this API, and its Bearer credential cannot manage login sessions, rename or unbind computers. Only credential hashes are stored; deleting a login session deletes its API credentials.
+
+Before deployment, apply migration `0002_computer_discovery.sql` with `npm run db:remote`, then deploy the updated Worker and website together. The existing desktop client already handles these controls and requires no update for this feature.
+
 ## Deploy your own service
 
 ```sh
@@ -88,7 +130,7 @@ npm run db:local
 npm run dev
 ```
 
-Open [the local site](http://localhost:8787). Configure a local Google Client ID in `.dev.vars`, use `.dev.vars.example` for the Client Secret, and add `http://localhost:8787/auth/callback` to the OAuth client. `npm run dev` overrides `PUBLIC_ORIGIN` locally. The API rejects hostnames that do not match `PUBLIC_ORIGIN`.
+Open [the local site](http://localhost:8787). Configure a local Google Client ID in `.dev.vars`, use `.dev.vars.example` for the Client Secret, and add `http://localhost:8787/auth/callback` to the OAuth client. `npm run dev` overrides `PUBLIC_ORIGIN` and the local upstream host; this prevents production routes from rewriting local request origins. The API rejects hostnames that do not match `PUBLIC_ORIGIN`.
 
 ```sh
 npm test                         # SQLite and signed mock Google identities; account isolation, commands, revocation.

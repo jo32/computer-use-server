@@ -371,5 +371,11 @@
   "这是临时公网地址；如果连接失败或地址失效，请让我确认公网分享已开启并重新复制 Prompt。": "This is a temporary public URL. If the connection fails or the URL expires, ask me to confirm public sharing is enabled and copy a new prompt.",
   "复制 Prompt，粘贴给 Agent 即可连接。": "Copy the prompt and paste it into your agent to connect.",
   "查看 Prompt": "View prompt",
-  "连接 Prompt": "Connection prompt"
+  "连接 Prompt": "Connection prompt",
+  "找不到已授权的电脑": "Authorized computer not found",
+  "复制云端 Prompt": "Copy cloud prompt",
+  "云端连接 Prompt": "Cloud connection prompt",
+  "正在生成…": "Generating…",
+  "复制失败，请选中 Prompt 手动复制": "Copy failed. Select the prompt and copy it manually.",
+  "云端凭证已失效，请重新登录并复制云端 Prompt": "Cloud credential is no longer valid. Sign in and copy a new cloud prompt."
 }

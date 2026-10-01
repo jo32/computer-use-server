@@ -697,3 +697,13 @@
     padding: 24px;
   }
 }
+
+.cloud-title-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.cloud-prompt-action { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.cloud-prompt-action .button { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.cloud-prompt-action .cloud-error { margin: 0; max-width: 300px; }
+.cloud-prompt-action textarea { width: min(300px, 100%); min-height: 120px; padding: 10px; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 12px; }
+@media (max-width: 480px) {
+  .cloud-title { flex-wrap: wrap; gap: 16px; }
+  .cloud-title-actions { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
+}

@@ -1,4 +1,9 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'
+import { now, randomToken, hash, HTTPError, json, body, text } from './http.ts'
+import { computerAPI, issueDiscoveryToken } from './computer-discovery.ts'
+import { expireCommands, commandHistory, queueCommand } from './computer-commands.ts'
+export { validateCommand } from './computer-commands.ts'
+export { hash, randomToken } from './http.ts'
 
 export interface Env {
   DB: D1Database
@@ -8,23 +13,14 @@ export interface Env {
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
 }
-type User = { id: string; email: string; name: string }
+export type User = { id: string; email: string; name: string }
 type Device = { id: string; user_id: string; name: string; revoked_at: number | null }
 type Pair = { id: string; challenge: string; name: string; platform: string; code: string; user_id: string | null; expires_at: number; claimed: number }
 const jwks = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'))
-const now = () => Math.floor(Date.now() / 1000)
-export function randomToken(): string {
-  return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-export async function hash(value: string): Promise<string> {
-  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), x => x.toString(16).padStart(2, '0')).join('')
-}
 async function pkce(value: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
-class HTTPError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status } }
-function json(data: unknown, status = 200): Response { return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } }) }
 function cookie(req: Request, key: string): string { return req.headers.get('Cookie')?.split(';').map(v => v.trim()).find(v => v.startsWith(key + '='))?.slice(key.length + 1) || '' }
 function cookieName(env: Env, kind: string): string { return (env.PUBLIC_ORIGIN.startsWith('https:') ? '__Host-' : '') + 'readyrig_' + kind }
 function setCookie(env: Env, kind: string, token: string, maxAge: number): string {
@@ -34,16 +30,6 @@ function redirect(path: string, cookies: string[] = []): Response {
   const headers = new Headers({ Location: path, 'Cache-Control': 'no-store' }); cookies.forEach(c => headers.append('Set-Cookie', c))
   return new Response(null, { status: 302, headers })
 }
-async function body(req: Request): Promise<Record<string, unknown>> {
-  if (!req.headers.get('Content-Type')?.startsWith('application/json')) throw new HTTPError(415, '请使用 JSON 请求')
-  if (Number(req.headers.get('Content-Length') || 0) > 65536) throw new HTTPError(413, '请求过大')
-  const reader = req.body?.getReader(); if (!reader) throw new HTTPError(400, '缺少请求内容')
-  const chunks: Uint8Array[] = []; let size = 0
-  while (true) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 65536) { await reader.cancel(); throw new HTTPError(413, '请求过大') }; chunks.push(value) }
-  const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
-  try { const value = JSON.parse(new TextDecoder().decode(bytes)); if (!value || typeof value !== 'object' || Array.isArray(value)) throw 0; return value } catch { throw new HTTPError(400, '无效的 JSON') }
-}
-function text(value: unknown, max = 128): string { if (typeof value !== 'string' || !value.trim() || new TextEncoder().encode(value).length > max) throw new HTTPError(400, '文本长度无效'); return value.trim() }
 async function user(req: Request, env: Env): Promise<User> {
   const token = cookie(req, cookieName(env, 'session'))
   const result = token && await env.DB.prepare('SELECT u.id,u.email,u.name FROM sessions s JOIN users u ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>?').bind(await hash(token), now()).first<User>()
@@ -59,15 +45,6 @@ async function owned(env: Env, id: string, owner: User): Promise<Device> {
   const device = await env.DB.prepare('SELECT id,user_id,name,revoked_at FROM devices WHERE id=? AND user_id=? AND revoked_at IS NULL').bind(id, owner.id).first<Device>()
   if (!device) throw new HTTPError(404, '找不到这台电脑'); return device
 }
-export function validateCommand(kind: unknown, payload: unknown): { kind: string; payload: Record<string, unknown> } {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new HTTPError(400, '无效的命令参数')
-  const p = payload as Record<string, unknown>
-  if (kind === 'tunnel.start' && (p.mode === 'quick' || p.mode === 'fixed')) return { kind, payload: { mode: p.mode } }
-  if (kind === 'tunnel.stop') return { kind, payload: {} }
-  if (kind === 'control.pause' && typeof p.paused === 'boolean') return { kind, payload: { paused: p.paused } }
-  if (kind === 'capability.set' && ['files', 'terminal', 'computer', 'browser'].includes(String(p.category)) && typeof p.enabled === 'boolean') return { kind, payload: { category: p.category, enabled: p.enabled } }
-  throw new HTTPError(400, '不支持的命令或配置')
-}
 // Upload only the defined status fields; local logs, paths, and credentials are excluded.
 export function sanitizeSnapshot(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HTTPError(400, '无效的设备状态')
@@ -76,9 +53,6 @@ export function sanitizeSnapshot(raw: unknown): Record<string, unknown> {
   const t = v.tunnel || {}, tunnel: Record<string, unknown> = {}
   for (const key of ['mode', 'state', 'message', 'url', 'gateway', 'console', 'mcp']) if (typeof t[key] === 'string' && t[key].length <= 2048) tunnel[key] = t[key]
   return { version: typeof v.version === 'string' ? v.version.slice(0, 64) : '', platform: typeof v.platform === 'string' ? v.platform.slice(0, 32) : '', paused: v.paused === true, enabled, tunnel }
-}
-async function expireCommands(env: Env, id: string): Promise<void> {
-  await env.DB.prepare("UPDATE commands SET status='expired',completed_at=?,error=CASE WHEN status='executing' THEN '设备未确认执行结果；不会重复执行' ELSE '命令已过期' END WHERE device_id=? AND ((status='queued' AND expires_at<=?) OR (status='executing' AND delivered_at<=?))").bind(now(), id, now(), now() - 90).run()
 }
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url), path = url.pathname
@@ -118,6 +92,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     ])
     return redirect(flow.return_to, [setCookie(env, 'session', session, 7 * 86400), setCookie(env, 'oauth', '', 0)])
   }
+  if (path.startsWith('/api/v1/')) return computerAPI(req, env)
   if (path.startsWith('/api/agent/') && req.method === 'POST') {
     const input = await body(req)
     if (path === '/api/agent/pair') {
@@ -165,6 +140,10 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (path.startsWith('/api/')) {
     if (req.method !== 'GET') sameOrigin(req, env)
     const owner = await user(req, env)
+    if (path === '/api/discovery-token' && req.method === 'POST') {
+      await body(req)
+      return issueDiscoveryToken(env, owner, await hash(cookie(req, cookieName(env, 'session'))))
+    }
     if (path === '/api/me' && req.method === 'GET') return json({ user: owner })
     if (path === '/api/logout' && req.method === 'POST') {
       await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(cookie(req, cookieName(env, 'session')))).run()
@@ -187,20 +166,8 @@ async function route(req: Request, env: Env): Promise<Response> {
     const match = /^\/api\/devices\/([A-Za-z0-9_-]{43})(\/commands)?$/.exec(path)
     if (match) {
       const device = await owned(env, match[1], owner)
-      if (match[2] && req.method === 'GET') {
-        await expireCommands(env, device.id)
-        return json({ commands: (await env.DB.prepare('SELECT id,kind,payload,status,created_at,delivered_at,completed_at,error FROM commands WHERE device_id=? ORDER BY created_at DESC,id DESC LIMIT 30').bind(device.id).all()).results.map((c: any) => ({ ...c, payload: JSON.parse(c.payload) })) })
-      }
-      if (match[2] && req.method === 'POST') {
-        const input = await body(req), cmd = validateCommand(input.kind, input.payload), requestId = text(input.request_id, 64)
-        const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM commands WHERE device_id=? AND status IN ('queued','executing')").bind(device.id).first<{ n: number }>()
-        if ((n?.n || 0) >= 20) throw new HTTPError(429, '待处理命令过多，请等待电脑执行')
-        await env.DB.prepare("INSERT OR IGNORE INTO commands(id,device_id,kind,payload,created_at,expires_at,request_id) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM devices WHERE id=? AND user_id=? AND revoked_at IS NULL)").bind(randomToken(), device.id, cmd.kind, JSON.stringify(cmd.payload), now(), now() + 300, requestId, device.id, owner.id).run()
-        const result = await env.DB.prepare('SELECT id,kind,payload,status FROM commands WHERE device_id=? AND request_id=?').bind(device.id, requestId).first<{ id: string; kind: string; payload: string; status: string }>()
-        if (!result) throw new HTTPError(409, '设备已解绑')
-        if (result.kind !== cmd.kind || result.payload !== JSON.stringify(cmd.payload)) throw new HTTPError(409, '请求编号已用于其他命令')
-        return json(result, 202)
-      }
+      if (match[2] && req.method === 'GET') return json(await commandHistory(env, device.id))
+      if (match[2] && req.method === 'POST') return json(await queueCommand(env, device.id, owner.id, await body(req)), 202)
       if (!match[2] && req.method === 'PATCH') { const input = await body(req); await env.DB.prepare('UPDATE devices SET name=? WHERE id=? AND revoked_at IS NULL').bind(text(input.name), device.id).run(); return json({ ok: true }) }
       if (!match[2] && req.method === 'DELETE') { await revoke(env, device.id); return json({ ok: true }) }
     }

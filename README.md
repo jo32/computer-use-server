@@ -77,6 +77,8 @@ Open the [cloud console](https://readyrig.getmegaportal.com/console) with the sa
 
 The official deployment has Google sign-in configured and verified. See the [cloud deployment guide](cloud/README.md) for setup and verification, or use `--cloud-url` / `READYRIG_CLOUD_URL` with your own deployment. The web console manages only computers bound to the signed-in account. Unbinding revokes device credentials. Fixed tunnel credentials, project folders, Full Access, and operating system permissions remain locally configured.
 
+From the [device console](https://readyrig.getmegaportal.com/console), choose **Copy cloud prompt** to get a prompt with a Bearer credential tied to your current login session. It lets an agent list your computers, retrieve public links and submit computer controls such as enabling shell, changing capability switches, starting/stopping sharing and pausing/resuming control. Actual tools run directly through the computer's public link without a token. Signing out or session expiry stops future cloud queries and control submissions. See the [cloud computer API](cloud/README.md#cloud-computer-api) for endpoints and deployment requirements.
+
 ## Chrome DevTools MCP
 
 ReadyRig starts and bridges the **official Chrome DevTools MCP** subprocess, adding its tools to REST, MCP, OpenAPI, and the Tools page. The application and bridge are written in Go; the official MCP subprocess requires Node.js.

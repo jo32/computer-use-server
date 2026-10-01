@@ -5,6 +5,8 @@ import type { IconName } from './components/Icon'
 import { publicConnectionPrompt } from './connection-prompt'
 import { LanguageSelect, useI18n } from './i18n'
 import type { Locale } from './locale'
+import { api, APIError } from './cloud-api'
+import { CloudPromptButton } from './CloudPromptButton'
 import './cloud-console.css'
 
 type User = { email: string; name: string }
@@ -30,25 +32,6 @@ type Command = {
   error?: string
 }
 type Pair = { name: string; platform: string; code: string; approved: boolean }
-class APIError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-  ) {
-    super(message)
-  }
-}
-async function api<T>(path: string, method = 'GET', data?: unknown): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    credentials: 'same-origin',
-    headers: data === undefined ? {} : { 'Content-Type': 'application/json' },
-    body: data === undefined ? undefined : JSON.stringify(data),
-  })
-  const result = await response.json()
-  if (!response.ok) throw new APIError(result.error || '请求失败', response.status)
-  return result as T
-}
 const commandNames: Record<string, string> = {
   'tunnel.start': '开启公网',
   'tunnel.stop': '关闭公网',
@@ -447,11 +430,14 @@ export default function CloudConsole() {
               <h1>{t('已连接的电脑')}</h1>
               <p>{t('管理已连接电脑的共享和访问权限。')}</p>
             </div>
-            {devices.length > 0 && (
-              <span className="cloud-device-count">
-                {t('{0} 台电脑 · {1} 在线', { 0: devices.length, 1: devices.filter((device) => device.online).length })}
-              </span>
-            )}
+            <div className="cloud-title-actions">
+              {devices.length > 0 && (
+                <span className="cloud-device-count">
+                  {t('{0} 台电脑 · {1} 在线', { 0: devices.length, 1: devices.filter((device) => device.online).length })}
+                </span>
+              )}
+              <CloudPromptButton disabled={!devices.length} />
+            </div>
           </div>
         )}
         {loading ? (

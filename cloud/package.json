@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --port 8787 --var PUBLIC_ORIGIN:http://localhost:8787",
+    "dev": "wrangler dev --port 8787 --local-upstream localhost:8787 --var PUBLIC_ORIGIN:http://localhost:8787",
     "check": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "build": "npm --prefix ../website run build && npm run check",

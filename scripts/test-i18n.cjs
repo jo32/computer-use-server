@@ -67,7 +67,7 @@ test('known diagnostic prefixes retain their technical cause',()=>{
 test('every interface string has English copy, with matching numbered parameters',()=>{
   const siteCatalog=JSON.parse(fs.readFileSync(path.join(root,'website/src/locales/en.json'),'utf8'));
   const files=['app.js','window.js','cloud.js'].map(name=>[path.join(assets,name),catalog]);
-  for(const name of ['App.tsx','i18n.tsx','CloudConsole.tsx',...fs.readdirSync(path.join(root,'website/src/components')).filter(name=>name.endsWith('.tsx')).map(name=>'components/'+name)]) files.push([path.join(root,'website/src',name),siteCatalog]);
+  for(const name of ['App.tsx','i18n.tsx','CloudConsole.tsx','CloudPromptButton.tsx','cloud-api.ts',...fs.readdirSync(path.join(root,'website/src/components')).filter(name=>name.endsWith('.tsx')).map(name=>'components/'+name)]) files.push([path.join(root,'website/src',name),siteCatalog]);
   const chinese=/[\u3400-\u9fff]/;
   for(const [file,dictionary] of files){
     const source=fs.readFileSync(file,'utf8');

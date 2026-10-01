@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { generateKeyPair, exportJWK, SignJWT } from 'jose'
 import worker, { hash, randomToken } from '../src/index.ts'
 import type { Env } from '../src/index.ts'
@@ -19,7 +19,7 @@ const origin = 'https://readyrig.example'
 const timestamp = () => Math.floor(Date.now() / 1000)
 beforeEach(async () => {
   db?.close(); db = new DatabaseSync(':memory:')
-  db.exec(readFileSync(new URL('../migrations/0001_control_plane.sql', import.meta.url), 'utf8'))
+  for (const file of readdirSync(new URL('../migrations/', import.meta.url)).filter(file => file.endsWith('.sql')).sort()) db.exec(readFileSync(new URL('../migrations/' + file, import.meta.url), 'utf8'))
   env = { PUBLIC_ORIGIN: origin, GOOGLE_CLIENT_ID: 'test-client', GOOGLE_CLIENT_SECRET: 'test-secret', ASSETS: { fetch: async () => new Response('website') }, DB: {
     prepare: (sql: string) => new Statement(db, sql),
     batch: async (statements: Statement[]) => { db.exec('BEGIN'); try { const results = statements.map(s => ({ success: true, meta: db.prepare(s.sql).run(...s.values) })); db.exec('COMMIT'); return results } catch (e) { db.exec('ROLLBACK'); throw e } }
@@ -181,4 +181,197 @@ test('logout invalidates its session and malformed or oversized requests fail', 
   assert.equal((await call('/api/me', 'GET', undefined, owner())).response.status, 401)
   assert.equal((await call('/api/agent/pair', 'POST', { challenge: 'a'.repeat(70000) })).response.status, 413)
   assert.equal((await call('/api/agent/pair', 'POST', { challenge: 'bad', name: 'Mac', platform: 'darwin' })).response.status, 400)
+})
+
+async function access(headers = owner()) {
+  const { response, result } = await call('/api/discovery-token', 'POST', {}, headers)
+  assert.equal(response.status, 201)
+  return { ...result, headers: { Authorization: 'Bearer ' + result.token } }
+}
+const beat = (d: { headers: Record<string, string> }, next = snapshot, results: unknown[] = []) => call('/api/agent/heartbeat', 'POST', { snapshot: next, results }, d.headers)
+
+test('public prompt discovery has placeholder credentials and working cloud routes in both languages', async () => {
+  for (const lang of ['zh-CN', 'en']) {
+    const { response, result } = await call('/api/v1/prompts?lang=' + lang)
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('Cache-Control'), 'no-store')
+    assert.ok(result.prompts[0].content.includes('<READYRIG_TOKEN>'))
+    for (const path of ['/api/v1/computers', '/commands', 'capability.set', 'terminal', 'request_id', '/api/v1/tools/help', '/api/v1/tools/list_projects', 'links.gateway', 'links.mcp']) assert.ok(result.prompts[0].content.includes(path))
+    assert.ok(!JSON.stringify(result).includes('alice'))
+    assert.ok(!JSON.stringify(result).includes('/api/agent/'))
+  }
+})
+test('cloud credentials are hashed, follow the signed-in account and cannot manage its login', async () => {
+  const a = await register(), other = await register()
+  db.prepare('UPDATE devices SET user_id=? WHERE id=?').run('bob', other.id)
+  const token = await access()
+  assert.match(token.token, /^rr_links_[A-Za-z0-9_-]{43}$/)
+  const stored = db.prepare('SELECT * FROM discovery_tokens').get()!
+  assert.equal(stored.token_hash, await hash(token.token))
+  assert.equal(stored.session_hash, await hash(session))
+  assert.equal(token.expires_at, db.prepare('SELECT expires_at FROM sessions WHERE token_hash=?').get(await hash(session))!.expires_at)
+  assert.ok(!JSON.stringify(stored).includes(token.token))
+  assert.notEqual(token.token, session)
+  await beat(a)
+  const listed = (await call('/api/v1/computers', 'GET', undefined, token.headers)).result.computers
+  assert.deepEqual(listed.map((d: any) => d.id), [a.id]); assert.equal(listed[0].online, true)
+  const b = await register()
+  const updated = (await call('/api/v1/computers', 'GET', undefined, token.headers)).result.computers
+  assert.deepEqual(new Set(updated.map((d: any) => d.id)), new Set([a.id, b.id]))
+  assert.equal((await call('/api/v1/computers/' + b.id, 'GET', undefined, token.headers)).response.status, 200)
+  assert.equal((await call('/api/v1/computers/' + other.id, 'GET', undefined, token.headers)).response.status, 404)
+  const bobToken = await access(secondOwner())
+  assert.deepEqual((await call('/api/v1/computers', 'GET', undefined, bobToken.headers)).result.computers.map((d: any) => d.id), [other.id])
+  for (const route of ['/api/me', '/api/devices']) assert.equal((await call(route, 'GET', undefined, token.headers)).response.status, 401)
+  assert.equal((await call('/api/discovery-token', 'POST', {}, { ...token.headers, Origin: origin })).response.status, 401)
+  assert.equal((await call('/api/devices/' + a.id + '/commands', 'POST', { kind: 'capability.set', payload: { category: 'terminal', enabled: true }, request_id: randomToken() }, { ...token.headers, Origin: origin })).response.status, 401)
+  for (const headers of [owner(), a.headers, { Authorization: 'Bearer ' + session }, {}]) assert.equal((await call('/api/v1/computers', 'GET', undefined, headers)).response.status, 401)
+  assert.equal((await call('/api/v1/computers', 'GET', undefined, { ...token.headers, Origin: 'https://evil.example' })).response.status, 403)
+  for (const [method, path] of [['GET', '/api/tokens'], ['POST', '/api/tokens'], ['DELETE', '/api/tokens/' + randomToken()]]) assert.equal((await call(path, method, method === 'GET' ? undefined : {}, owner())).response.status, 404)
+})
+test('credential issuance requires a same-origin login session without a management form', async () => {
+  assert.equal((await call('/api/discovery-token', 'POST', {})).response.status, 403)
+  assert.equal((await call('/api/discovery-token', 'POST', {}, { Origin: origin })).response.status, 401)
+  assert.equal((await call('/api/discovery-token', 'POST', {}, { ...owner(), Origin: 'https://evil.example' })).response.status, 403)
+  assert.equal((await call('/api/discovery-token', 'POST', [], owner())).response.status, 400)
+  assert.equal((await call('/api/discovery-token', 'POST', { oversized: 'a'.repeat(70000) }, owner())).response.status, 413)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM discovery_tokens').get()!.n, 0)
+  // Issuance works before binding; there is no selected-device grant to maintain.
+  const token = await access()
+  assert.deepEqual((await call('/api/v1/computers', 'GET', undefined, token.headers)).result.computers, [])
+})
+test('authorized link discovery returns complete public URLs without changing the computer', async () => {
+  const d = await register(), token = await access(), path = '/api/v1/computers/' + d.id
+  const ready = { ...snapshot, tunnel: { state: 'ready', mode: 'quick', gateway: 'https://fixture.trycloudflare.com/AbC123xy', token: 'private-device-secret' } }
+  await beat(d, ready as any)
+  const listed = await call(path, 'GET', undefined, token.headers)
+  assert.deepEqual(listed.result.computer.links, { gateway: ready.tunnel.gateway, mcp: ready.tunnel.gateway + '/mcp', console: ready.tunnel.gateway + '/app/' })
+  assert.equal(listed.result.computer.connection.mode, 'quick')
+  assert.ok(!JSON.stringify(listed.result).includes('private-device-secret'))
+  for (const route of ['/connect', '/tools/help']) assert.equal((await call(path + route, 'POST', {}, token.headers)).response.status, 404)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM commands').get()!.n, 0)
+})
+test('discovery hides unavailable links and refreshes temporary links after rotation', async () => {
+  const d = await register(), token = await access(), path = '/api/v1/computers/' + d.id
+  for (const state of ['stopped', 'connecting', 'failed']) {
+    await beat(d, { ...snapshot, tunnel: { state, gateway: 'https://fixture.trycloudflare.com/AbC123xy' } } as any)
+    assert.equal((await call(path, 'GET', undefined, token.headers)).result.computer.links, null)
+  }
+  for (const accessPath of ['AbC123xy', 'XyZ987ab']) {
+    const gateway = 'https://fixture.trycloudflare.com/' + accessPath
+    await beat(d, { ...snapshot, tunnel: { state: 'ready', gateway } } as any)
+    assert.equal((await call(path, 'GET', undefined, token.headers)).result.computer.links.gateway, gateway)
+  }
+  db.prepare('UPDATE devices SET last_seen=? WHERE id=?').run(timestamp() - 61, d.id)
+  const offline = (await call(path, 'GET', undefined, token.headers)).result.computer
+  assert.equal(offline.online, false); assert.equal(offline.links, null)
+  assert.equal(offline.connection.state, 'offline')
+  for (const gateway of ['http://fixture.trycloudflare.com/AbC123xy', 'https://user:pass@fixture.trycloudflare.com/AbC123xy', 'https://fixture.trycloudflare.com/AbC123xy?secret=private', 'https://fixture.trycloudflare.com/invalid/path', 'bad-url']) {
+    await beat(d, { ...snapshot, tunnel: { state: 'ready', gateway } } as any)
+    assert.equal((await call(path, 'GET', undefined, token.headers)).result.computer.links, null)
+  }
+})
+test('logout and session expiry stop discovery without changing public links or device credentials', async () => {
+  const d = await register(), primary = await access(), path = '/api/v1/computers/' + d.id
+  const ready = { ...snapshot, tunnel: { state: 'ready', gateway: 'https://fixture.trycloudflare.com/AbC123xy' } }
+  await beat(d, ready as any)
+  for (const kind of ['logout', 'expire']) {
+    const browser = randomToken(), sessionHash = await hash(browser)
+    db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(sessionHash, 'alice', timestamp() + 600)
+    const headers = { Cookie: '__Host-readyrig_session=' + browser, Origin: origin }
+    const token = await access(headers)
+    if (kind === 'logout') {
+      assert.equal((await call('/api/logout', 'POST', {}, headers)).response.status, 200)
+      assert.equal(db.prepare('SELECT * FROM discovery_tokens WHERE session_hash=?').get(sessionHash), undefined)
+    } else db.prepare('UPDATE sessions SET expires_at=? WHERE token_hash=?').run(timestamp() - 1, sessionHash)
+    assert.equal((await call(path, 'GET', undefined, token.headers)).response.status, 401)
+    assert.equal((await call('/api/v1/computers', 'GET', undefined, token.headers)).response.status, 401)
+    const controls = path + '/commands'
+    assert.equal((await call(controls, 'GET', undefined, token.headers)).response.status, 401)
+    assert.equal((await call(controls, 'POST', { kind: 'tunnel.stop', payload: {}, request_id: randomToken() }, token.headers)).response.status, 401)
+    assert.equal((await call(path, 'GET', undefined, primary.headers)).response.status, 200)
+    const heartbeat = await beat(d, ready as any)
+    assert.equal(heartbeat.response.status, 200); assert.equal(heartbeat.result.command, null)
+    assert.equal(JSON.parse(db.prepare('SELECT snapshot FROM devices WHERE id=?').get(d.id)!.snapshot as string).tunnel.gateway, ready.tunnel.gateway)
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM commands').get()!.n, 0)
+  }
+})
+test('unbinding removes an authorized device and prevents old credentials from discovering its links', async () => {
+  const d = await register(), token = await access()
+  await call('/api/devices/' + d.id, 'DELETE', undefined, owner())
+  assert.equal((await call('/api/v1/computers', 'GET', undefined, token.headers)).result.computers.length, 0)
+  assert.equal((await call('/api/v1/computers/' + d.id, 'GET', undefined, token.headers)).response.status, 404)
+})
+
+test('Bearer computer controls share the browser queue and require an owned bound computer', async () => {
+  const d = await register(), other = await register(), token = await access()
+  db.prepare('UPDATE devices SET user_id=? WHERE id=?').run('bob', other.id)
+  const path = '/api/v1/computers/' + d.id + '/commands'
+  const input = { kind: 'capability.set', payload: { category: 'terminal', enabled: true }, request_id: randomToken() }
+  for (const headers of [{}, owner(), d.headers]) assert.equal((await call(path, 'POST', input, headers)).response.status, 401)
+  assert.equal((await call(path, 'POST', input, { ...token.headers, Origin: 'https://evil.example' })).response.status, 403)
+  for (const method of ['GET', 'POST']) assert.equal((await call('/api/v1/computers/' + other.id + '/commands', method, method === 'POST' ? input : undefined, token.headers)).response.status, 404)
+  const queued = await call(path, 'POST', input, token.headers)
+  assert.equal(queued.response.status, 202); assert.equal(queued.result.status, 'queued')
+  const retry = await call('/api/devices/' + d.id + '/commands', 'POST', input, owner())
+  assert.equal(retry.response.status, 202); assert.equal(retry.result.id, queued.result.id)
+  const delivered = await beat(d)
+  assert.deepEqual(delivered.result.command, { id: queued.result.id, kind: input.kind, payload: input.payload })
+  assert.equal((await beat(d)).result.command, null)
+  await beat(d, { ...snapshot, enabled: { ...snapshot.enabled, terminal: true } }, [{ id: queued.result.id }])
+  const history = (await call(path, 'GET', undefined, token.headers)).result.commands
+  assert.equal(history[0].id, queued.result.id); assert.equal(history[0].status, 'completed')
+  assert.equal((await call('/api/v1/computers/' + d.id, 'GET', undefined, token.headers)).result.computer.enabled.terminal, true)
+  await call('/api/devices/' + d.id, 'DELETE', undefined, owner())
+  assert.equal((await call(path, 'POST', { ...input, request_id: randomToken() }, token.headers)).response.status, 404)
+  assert.equal((await call(path, 'GET', undefined, token.headers)).response.status, 404)
+})
+test('Bearer controls accept defined toggles and report execution failures and expiry', async () => {
+  const d = await register(), token = await access(), path = '/api/v1/computers/' + d.id + '/commands'
+  const actions = [
+    ['capability.set', { category: 'terminal', enabled: true }],
+    ['capability.set', { category: 'terminal', enabled: false }],
+    ['capability.set', { category: 'files', enabled: true }],
+    ['capability.set', { category: 'browser', enabled: true }],
+    ['capability.set', { category: 'computer', enabled: true }],
+    ['control.pause', { paused: true }], ['control.pause', { paused: false }],
+    ['tunnel.start', { mode: 'quick' }], ['tunnel.start', { mode: 'fixed' }], ['tunnel.stop', {}]
+  ]
+  for (const [kind, payload] of actions) {
+    const { response, result } = await call(path, 'POST', { kind, payload, request_id: randomToken() }, token.headers)
+    assert.equal(response.status, 202)
+    assert.equal((await beat(d)).result.command.id, result.id)
+    await beat(d, snapshot, [{ id: result.id }])
+  }
+  const failed = await call(path, 'POST', { kind: 'tunnel.start', payload: { mode: 'fixed' }, request_id: randomToken() }, token.headers)
+  await beat(d)
+  await beat(d, snapshot, [{ id: failed.result.id, error: 'Fixed tunnel is not configured' }])
+  const expired = await call(path, 'POST', { kind: 'tunnel.stop', payload: {}, request_id: randomToken() }, token.headers)
+  db.prepare('UPDATE commands SET expires_at=? WHERE id=?').run(timestamp() - 1, expired.result.id)
+  const history = (await call(path, 'GET', undefined, token.headers)).result.commands
+  assert.equal(history.find((c: any) => c.id === failed.result.id).status, 'failed')
+  assert.equal(history.find((c: any) => c.id === failed.result.id).error, 'Fixed tunnel is not configured')
+  assert.equal(history.find((c: any) => c.id === expired.result.id).status, 'expired')
+  assert.equal((await beat(d)).result.command, null)
+})
+test('Bearer controls validate bodies and preserve retries even at the shared queue limit', async () => {
+  const d = await register(), token = await access(), path = '/api/v1/computers/' + d.id + '/commands'
+  for (const [kind, payload] of [['shell.exec', {}], ['capability.set', { category: 'full_access', enabled: true }], ['capability.set', { category: ['terminal'], enabled: true }], ['capability.set', { category: 'terminal', enabled: 'true' }], ['control.pause', { paused: 'false' }], ['tunnel.start', { mode: 'unknown' }], ['tunnel.stop', []]]) {
+    assert.equal((await call(path, 'POST', { kind, payload, request_id: randomToken() }, token.headers)).response.status, 400)
+  }
+  for (const request_id of [undefined, '', 'a'.repeat(65)]) assert.equal((await call(path, 'POST', { kind: 'tunnel.stop', payload: {}, request_id }, token.headers)).response.status, 400)
+  assert.equal((await call(path, 'POST', { oversized: 'a'.repeat(70000) }, token.headers)).response.status, 413)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM commands').get()!.n, 0)
+  const input = { kind: 'tunnel.stop', payload: {}, request_id: randomToken() }
+  const first = await call(path, 'POST', input, token.headers)
+  const concurrent = await Promise.all(Array.from({ length: 23 }, (_, index) => call(index % 2 ? '/api/devices/' + d.id + '/commands' : path, 'POST', { ...input, request_id: randomToken() }, index % 2 ? owner() : token.headers)))
+  assert.equal(concurrent.filter(r => r.response.status === 202).length, 19)
+  assert.equal(concurrent.filter(r => r.response.status === 429).length, 4)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM commands').get()!.n, 20)
+  const retry = await call(path, 'POST', input, token.headers)
+  assert.equal(retry.response.status, 202); assert.equal(retry.result.id, first.result.id)
+  assert.equal((await call(path, 'POST', { ...input, kind: 'control.pause', payload: { paused: true } }, token.headers)).response.status, 409)
+  await call('/api/logout', 'POST', {}, owner())
+  assert.equal((await call(path, 'POST', input, token.headers)).response.status, 401)
+  assert.equal((await call(path, 'GET', undefined, token.headers)).response.status, 401)
 })
