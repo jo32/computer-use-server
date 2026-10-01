@@ -132,7 +132,14 @@ func run() (runErr error) {
 			return err
 		}
 	}
-	updates := update.New(update.Options{Version: buildinfo.Version, Feed: feed, GUI: desktop.Available, Disabled: opts.NoUpdate})
+	var runningServer *server.Server
+	updates := update.New(update.Options{Version: buildinfo.Version, Feed: feed, GUI: desktop.Available, Disabled: opts.NoUpdate, RestartArgs: func() []string {
+		if runningServer == nil {
+			return os.Args[1:]
+		}
+		_, enabled := runningServer.Registry.State()
+		return capabilityRestartArgs(os.Args[1:], flags, enabled)
+	}})
 	// Registered before App.Close and listener shutdown: install only after all
 	// tools, data files and ports have been released.
 	defer func() {
@@ -172,6 +179,10 @@ func run() (runErr error) {
 	}
 	closeApp := sync.OnceFunc(a.Close)
 	defer closeApp()
+	runningServer = a.Server
+	a.Server.SaveCapability = func(category string, enabled bool) error {
+		return saveCapabilityConfig(a.Server.Store.Dir, category, enabled)
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -193,14 +204,13 @@ func run() (runErr error) {
 		a.Server.Tunnel = tunnel.New(tunnel.Options{Dir: filepath.Join(a.Server.Store.Dir, "cloudflared"), Command: opts.Cloudflared, Changed: a.Server.Registry.Signal, RedactSecrets: a.Server.Registry.AddSecrets})
 	}
 	a.Server.Projects.SetFullAccess(opts.FullAccess)
+	for category, enabled := range map[string]bool{"files": !opts.NoFiles, "terminal": opts.Shell, "computer": opts.Computer, "browser": !opts.NoChrome} {
+		if err := a.Server.Registry.Enable(category, enabled); err != nil {
+			return err
+		}
+	}
 	if err = a.Chrome.Start(chromemcp.Options{Disabled: opts.NoChrome, BrowserURL: opts.ChromeURL, UserDataDir: opts.ChromeProfile, Command: opts.ChromeCommand}); err != nil {
 		return err
-	}
-	if opts.Shell {
-		a.Server.Registry.Enable("terminal", true)
-	}
-	if opts.Computer {
-		a.Server.Registry.Enable("computer", true)
 	}
 	if opts.AllowIP != "" {
 		for _, v := range strings.Split(opts.AllowIP, ",") {

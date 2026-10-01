@@ -77,7 +77,8 @@ with tempfile.TemporaryDirectory(prefix='readyrig-update-e2e-') as tmp:
     base = f'http://127.0.0.1:{ui}'
     logpath = root / 'process.log'
     log = logpath.open('w')
-    proc = subprocess.Popen([str(installed), 'desktop' if desktop else 'web', '--no-chrome', '--workspace', str(root / 'workspace'),
+    proc = subprocess.Popen([str(installed), 'desktop' if desktop else 'web', *([] if desktop else ['--foreground']),
+                             '--allow-shell', '--no-chrome', '--workspace', str(root / 'workspace'),
                              '--data-dir', str(root / 'data'), '--ui', f'127.0.0.1:{ui}',
                              '--gateway', f'127.0.0.1:{gateway}', '--update-feed',
                              f'http://127.0.0.1:{feed.server_port}/latest'], stdout=log, stderr=log)
@@ -111,10 +112,14 @@ with tempfile.TemporaryDirectory(prefix='readyrig-update-e2e-') as tmp:
         api('/api/update/check', {})
         eventually(lambda: api('/api/update')['state'] == 'ready')
         assert api('/api/state')['version'] == '0.4.0'
+        assert api('/api/state')['enabled']['terminal'] is True
         assert subprocess.check_output([str(installed), 'version'], text=True).strip() == 'ReadyRig 0.4.0'
         # Ensure normal service data survives the restart.
         api('/api/tools/write_file', {'path': 'update-test.txt', 'content': 'preserved'})
         total = api('/api/state')['summary']['total']
+        # The initial shell launch flag must not override a later saved choice.
+        for category, enabled in [('terminal', False), ('computer', True), ('files', False)]:
+            api('/api/capability', {'category': category, 'enabled': enabled})
         if os.environ.get('READYRIG_TEST_PAUSE', os.environ.get('RELAY_TEST_PAUSE')) == '1':
             print(f'Dashboard: {base}/#key={key}', flush=True)
             print(f'Continue file: {root / "continue"}', flush=True)
@@ -126,9 +131,14 @@ with tempfile.TemporaryDirectory(prefix='readyrig-update-e2e-') as tmp:
         assert api('/api/state')['version'] == '0.5.0'
         assert api('/api/state')['summary']['total'] == total
         assert api('/api/state')['enabled']['terminal'] is False
+        assert api('/api/state')['enabled']['computer'] is True
+        assert api('/api/state')['enabled']['files'] is False
+        assert api('/api/state')['enabled']['browser'] is False
+        saved = json.loads((root / 'data' / 'cli.json').read_text())
+        assert saved == {'allow-shell': False, 'allow-computer': True, 'no-files': True}
         assert (root / 'workspace' / 'update-test.txt').read_text() == 'preserved'
         assert installed.read_bytes() == new.read_bytes()
-        print('PASS: background stage → authenticated restart → 0.5.0; data and arguments preserved', flush=True)
+        print('PASS: background stage → authenticated restart → 0.5.0; data, launch options and capability choices preserved', flush=True)
     finally:
         proc.terminate()
         try:

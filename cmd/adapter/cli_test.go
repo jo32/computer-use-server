@@ -190,11 +190,20 @@ func TestCLIServiceAndToolsEndToEnd(t *testing.T) {
 	cli(true, "share", "status")
 	cli(true, "share", "stop")
 	cli(true, "cloud", "status")
+	cli(true, "capability", "computer", "on")
+	cli(true, "capability", "files", "off")
 	stop()
 	if _, err := os.Stat(filepath.Join(data, "control.json")); !os.IsNotExist(err) {
 		t.Fatal("control metadata not removed on exit")
 	}
 	cli(false, "status")
+	_, stop = start("serve", "--foreground")
+	if err := json.Unmarshal(cli(true, "status"), &state); err != nil || !state.Enabled["computer"] || state.Enabled["files"] || state.Enabled["terminal"] || state.Enabled["browser"] {
+		t.Fatal("last capability choices did not survive restart", state.Enabled, err)
+	}
+	cli(true, "capability", "computer", "off")
+	cli(true, "capability", "files", "on")
+	stop()
 	cli(true, "config", "set", "allow-shell", "false")
 	_, stop = start("serve", "--foreground", "--allow-shell", "--full-access") // Explicit launch override, never saved.
 	if err := json.Unmarshal(cli(true, "status"), &state); err != nil || !state.Enabled["terminal"] {
@@ -214,8 +223,8 @@ func TestCLIServiceAndToolsEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(cli(true, "projects", "list"), &projects); err != nil || projects.FullAccess {
 		t.Fatal("Full Access survived a restart", err)
 	}
-	if err := json.Unmarshal(cli(true, "status"), &state); err != nil || state.Enabled["terminal"] {
-		t.Fatal("saved shell setting ignored", err)
+	if err := json.Unmarshal(cli(true, "status"), &state); err != nil || state.Enabled["terminal"] || state.Enabled["computer"] || !state.Enabled["files"] {
+		t.Fatal("saved capability settings ignored", state.Enabled, err)
 	}
 	stop()
 }

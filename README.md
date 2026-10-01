@@ -71,7 +71,7 @@ Open the terminal dashboard:
 readyrig
 ```
 
-On first launch it opens the setup guide; on later launches it starts or attaches to the service. The TUI shows live connection and capability status, approved projects, tools, and recent activity. Use Tab or 1–4 to change views, arrows or j/k to select items, `s` to start/stop, `p` to pause/resume, and `f`/`t`/`b`/`c` to toggle files/terminal/browser/computer for the current run. In Projects, `a` adds a folder, Enter selects it, and `d` removes access after confirmation. `h` toggles temporary public sharing. `q` or Ctrl-C closes the TUI and keeps the service running. Noninteractive invocation prints command help and returns.
+On first launch it opens the setup guide; on later launches it starts or attaches to the service. The TUI shows live connection and capability status, approved projects, tools, and recent activity. Use Tab or 1–4 to change views, arrows or j/k to select items, `s` to start/stop, `p` to pause/resume, and `f`/`t`/`b`/`c` to toggle and save files/terminal/browser/computer. In Projects, `a` adds a folder, Enter selects it, and `d` removes access after confirmation. `h` toggles temporary public sharing. `q` or Ctrl-C closes the TUI and keeps the service running. Noninteractive invocation prints command help and returns.
 
 Run `readyrig setup` to change saved startup settings while the service is stopped. For scripted configuration and lifecycle control:
 
@@ -110,7 +110,7 @@ readyrig pause
 readyrig resume
 ```
 
-Results use JSON for scripting. `call <tool> -` reads JSON from stdin; `--session` before the tool name keeps process sessions and screenshot frames associated with the same task. Failed calls return a nonzero exit code and retain the service's JSON error result. Tool calls use the same audit log and capability/paused checks as REST and MCP. Runtime capability switches reset at restart; saved startup settings such as `allow-shell` apply again. Projects and their selection persist. Full Access remains session-only: use `serve --full-access` explicitly, and it cannot be saved by `init` or `config set`.
+Results use JSON for scripting. `call <tool> -` reads JSON from stdin; `--session` before the tool name keeps process sessions and screenshot frames associated with the same task. Failed calls return a nonzero exit code and retain the service's JSON error result. Tool calls use the same audit log and capability/paused checks as REST and MCP. Capability changes from the local dashboard, TUI, CLI, and bound cloud account are saved in private `cli.json` and restored on restart. Explicit launch flags override saved choices for that run; changing a switch saves only that choice, preserving unrelated settings. Projects and their selection persist. Full Access remains session-only: use `serve --full-access` explicitly, and it cannot be saved by `init` or `config set`.
 
 Connections and account binding also work without a browser on the VM:
 
@@ -151,7 +151,7 @@ Use global `--data-dir /private/path` before or after a command for another inst
 - **Connection** provides the current agent URL and MCP configuration, system permission status, capability switches, sharing, and software updates. **Local configuration → Copy setup prompt** gives a local terminal-capable agent CLI instructions using this instance’s exact executable and data directory. The preview and copied prompt follow the selected language and explain which changes need a restart. This entry is available only in the local console.
 - **Pause control** cancels active calls and terminal process groups and rejects new tool calls. Disabling one capability cancels only calls in that category.
 
-File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations can be enabled locally for a run, explicitly through `--allow-shell` and `--allow-computer`, or through saved CLI startup settings for the app and `serve`/`web`. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
+File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations can be enabled locally, explicitly through `--allow-shell` and `--allow-computer`, or through saved CLI startup settings for the app and `serve`/`web`. All four capability switches remember the last selection. `--no-files` and `--no-chrome` disable file and browser tools on launch. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
 
 On macOS, left-click the menu bar computer icon to open the quick panel; clicking outside dismisses it. Right-click for the native menu to open the full window, pause or resume, check for updates, or quit. Closing the main window keeps the service running; quitting stops it. The icon animates during tool execution, indicates pause, and respects Reduce Motion.
 
@@ -202,7 +202,7 @@ bin/readyrig-web web --chrome-user-data-dir /absolute/path/to/chrome-profile
 bin/readyrig-web web --chrome-mcp-command /absolute/path/to/chrome-devtools-mcp
 ```
 
-Only local HTTP debugging URLs are accepted, without redirects or remote WebSocket endpoints. Profile discovery reads the debugging endpoint file rather than browsing history or account data. Use `--no-chrome` to disable startup detection, or the Chrome browser switch to disable it for the current run. Remote agents cannot change this setting.
+Only local HTTP debugging URLs are accepted, without redirects or remote WebSocket endpoints. Profile discovery reads the debugging endpoint file rather than browsing history or account data. Use `--no-chrome` to disable startup detection, or the Chrome browser switch to save that choice for future launches. The direct agent API cannot change this setting; a bound cloud account can.
 
 Browser calls log arguments, duration, results, and failures and can be filtered by the browser category. The bridge preserves upstream schemas, annotations, text, images, and `structuredContent`. Browser screenshots appear in call details and JSON logs, but are excluded from desktop replay and desktop snapshot counts. Calls execute serially with a two-minute limit. Pause or cancellation disconnects the MCP subprocess; it reconnects after control resumes without closing your Chrome or retrying previously issued actions. Completed browser actions cannot be undone.
 
@@ -353,7 +353,7 @@ The default release repository is [jo32/readyrig](https://github.com/jo32/readyr
 
 Updates match the current operating system, architecture, and desktop/browser build. ReadyRig verifies size and SHA-256, plus macOS app signature integrity, signing team, and bundle ID. Signed installations cannot downgrade to ad-hoc signatures. Downloads retry up to three times, duplicate checks are merged, completed downloads survive later network failures, and replacement failures roll back. Concurrent processes cannot update the same installation.
 
-`dev` and source-description builds do not self-update. Read-only or Homebrew-managed installations show manual update instructions without requesting administrator privileges in the background. Restart restores launch arguments, initializes capabilities from those arguments, and generates a new local/temporary agent path. The macOS app restarts through LaunchServices as a fresh app process so its menu bar icon and window activation remain available. If an older version has already restarted without a menu bar icon, fully quit ReadyRig and reopen it from Applications once. Browser mode requires login through the newly printed dashboard URL. Fixed sharing must be restarted to restore its saved URL.
+`dev` and source-description builds do not self-update. Read-only or Homebrew-managed installations show manual update instructions without requesting administrator privileges in the background. An update restart preserves launch options and current capability choices, and generates a new local/temporary agent path. The macOS app restarts through LaunchServices as a fresh app process so its menu bar icon and window activation remain available. If an older version has already restarted without a menu bar icon, fully quit ReadyRig and reopen it from Applications once. Browser mode requires login through the newly printed dashboard URL. Fixed sharing must be restarted to restore its saved URL.
 
 ```sh
 bin/readyrig version                 # Show the current version.

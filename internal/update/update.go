@@ -47,6 +47,7 @@ type Status struct {
 type Options struct {
 	Version, Feed string
 	GUI, Disabled bool
+	RestartArgs   func() []string
 }
 
 type Manager struct {
@@ -64,6 +65,7 @@ type Manager struct {
 	client                                    *http.Client
 	tokenOnce                                 sync.Once
 	token                                     string
+	restartArgs                               func() []string
 }
 
 func New(o Options) *Manager {
@@ -82,7 +84,7 @@ func New(o Options) *Manager {
 
 func newAt(o Options, exe string) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
-	u := &Manager{feed: o.Feed, exe: exe, target: exe, ctx: ctx, cancel: cancel, restartCh: make(chan struct{}), status: Status{State: "idle", Current: o.Version}}
+	u := &Manager{feed: o.Feed, exe: exe, target: exe, ctx: ctx, cancel: cancel, restartCh: make(chan struct{}), status: Status{State: "idle", Current: o.Version}, restartArgs: o.RestartArgs}
 	u.client = &http.Client{Timeout: 10 * time.Minute, CheckRedirect: func(r *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("too many update redirects")
@@ -411,7 +413,11 @@ func (u *Manager) Finish(install bool) (err error) {
 				return err
 			}
 		}
-		return Reexec(exe, os.Args[1:])
+		args := os.Args[1:]
+		if u.restartArgs != nil {
+			args = u.restartArgs()
+		}
+		return Reexec(exe, args)
 	}
 	return nil
 }

@@ -2,6 +2,12 @@
 
 Notable changes to ReadyRig are recorded here. For setup and current behavior, see the [README](README.md).
 
+## 0.6.7
+
+### Fixed
+
+- File, terminal, desktop, and Chrome capability switches now save the last selection and restore it on restart, including changes through the local dashboard, CLI/TUI, and bound cloud account. Update restarts retain current switches instead of replaying stale capability flags.
+
 ## 0.6.6
 
 ### Fixed

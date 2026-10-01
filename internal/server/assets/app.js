@@ -118,9 +118,9 @@ function localConfigurationPrompt(context){
   t("请帮我配置这台电脑上的 ReadyRig，使用本机终端中的 ReadyRig CLI。先检查现状，再根据我的需求完成配置。若你不能在这台电脑上执行命令，请明确说明；不要声称已完成配置。"),
   t("以下命令使用当前实例的 CLI 绝对路径和数据目录。路径已经按 POSIX shell 规则加引号，后续每个 CLI 命令都必须保留相同的 --data-dir。先执行这些只读检查，阅读实际版本、帮助、启动设置、项目和可用工具：\n{0}",{0:commands}),
   t("如果我已说明目标，就按目标继续；否则先询问要授权哪些目录、使用哪些能力，以及是否需要公网分享或云端账号。保留现有配置，仅修改完成目标所需的项目；通过 CLI 配置，不要直接编辑配置文件。"),
-  t("根据 help 中实际支持的命令操作：projects add/use/list 管理项目；capability <files|terminal|browser|computer> on|off 调整当前运行的能力；share configure/start/status 管理分享；cloud login/status 管理账号绑定。仅在我的需求包含这些功能时操作。需要登录或系统权限时，告诉我具体要完成的步骤，并确认结果。"),
+  t("根据 help 中实际支持的命令操作：projects add/use/list 管理项目；capability <files|terminal|browser|computer> on|off 调整并保存能力开关；share configure/start/status 管理分享；cloud login/status 管理账号绑定。仅在我的需求包含这些功能时操作。需要登录或系统权限时，告诉我具体要完成的步骤，并确认结果。"),
   lifecycle,
-  t("项目、固定链接配置和账号绑定会保存；capability 和 pause/resume 的变化只作用于当前运行。需要每次启动生效的选项用 config set <key> <value> 保存，具体选项先查 help。Full Access 不能保存，不要默认开启全部能力或公网分享。固定隧道令牌用 share configure --token-stdin 输入，不要把令牌放进命令行或回复中。"),
+  t("项目、能力开关、固定链接配置和账号绑定会保存；pause/resume 的变化只作用于当前运行。其他需要每次启动生效的选项用 config set <key> <value> 保存，具体选项先查 help。Full Access 不能保存，不要默认开启全部能力或公网分享。固定隧道令牌用 share configure --token-stdin 输入，不要把令牌放进命令行或回复中。"),
   t("完成后重新执行 status、projects list 和 tools，按目标检查 connection、share status 或 cloud status，并做必要的最小功能验证。报告实际改了什么、哪些设置会保留、哪些只对本次运行有效，以及仍需我完成的步骤。不能仅凭修改成功就声称整套流程已验证。"),
   t("我想要：...")
  ].join('\n\n');

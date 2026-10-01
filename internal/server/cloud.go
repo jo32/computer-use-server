@@ -62,16 +62,10 @@ func (s *Server) executeCloudCommand(cmd cloud.Command) error {
 		if in.Enabled == nil {
 			return errors.New("缺少 enabled 设置")
 		}
-		if in.Category != "files" && in.Category != "terminal" && in.Category != "computer" && in.Category != "browser" {
+		if !capabilityCategory(in.Category) {
 			return errors.New("未知的能力配置")
 		}
-		if err := s.Registry.Enable(in.Category, *in.Enabled); err != nil {
-			return err
-		}
-		if s.Chrome != nil {
-			s.Chrome.Refresh()
-		}
-		return nil
+		return s.setCapability(in.Category, *in.Enabled)
 	default:
 		return errors.New("不支持的云端命令")
 	}

@@ -18,7 +18,7 @@ import (
 type startupOptions struct {
 	Workspace, DataDir, Gateway, UI, Cloudflared, CloudURL, AllowIP string
 	ChromeURL, ChromeProfile, ChromeCommand, UpdateRepo, UpdateFeed string
-	FullAccess, Share, Shell, Computer, NoChrome, NoUpdate          bool
+	FullAccess, Share, Shell, Computer, NoFiles, NoChrome, NoUpdate bool
 	Foreground                                                      bool
 }
 
@@ -38,6 +38,7 @@ func startupFlags(home, dataDir string, saved bool) (*flag.FlagSet, *startupOpti
 	f.StringVar(&o.CloudURL, "cloud-url", buildinfo.CloudURL, "Cloud console URL for device binding")
 	f.BoolVar(&o.Shell, "allow-shell", false, "Enable host shell execution (not sandboxed)")
 	f.BoolVar(&o.Computer, "allow-computer", false, "Enable native computer use")
+	f.BoolVar(&o.NoFiles, "no-files", false, "Disable project file tools")
 	f.StringVar(&o.AllowIP, "allow-ip", "", "Comma-separated peer IP CIDRs for gateway")
 	f.BoolVar(&o.NoChrome, "no-chrome", false, "Disable automatic Chrome DevTools MCP bridge")
 	f.StringVar(&o.ChromeURL, "chrome-browser-url", "", "Existing Chrome debugging HTTP URL on loopback")
@@ -117,6 +118,78 @@ func saveConfig(dir string, f *flag.FlagSet) error {
 		}
 	})
 	return writePrivateJSON(filepath.Join(dir, configFile), values)
+}
+
+func capabilitySetting(category string, enabled bool) (string, bool) {
+	switch category {
+	case "files":
+		return "no-files", !enabled
+	case "terminal":
+		return "allow-shell", enabled
+	case "computer":
+		return "allow-computer", enabled
+	case "browser":
+		return "no-chrome", !enabled
+	default:
+		return "", false
+	}
+}
+
+// The running server owns the data lock and serializes capability saves. Merge
+// only the chosen setting, preserving other saved options and launch overrides.
+func saveCapabilityConfig(dir, category string, enabled bool) error {
+	name, value := capabilitySetting(category, enabled)
+	if name == "" {
+		return errors.New("unknown capability")
+	}
+	values, err := readConfig(dir)
+	if err != nil {
+		return err
+	}
+	values[name], err = json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writePrivateJSON(filepath.Join(dir, configFile), values)
+}
+
+// Replayed daemon/app launch flags must reflect the switches at shutdown.
+func capabilityRestartArgs(args []string, flags *flag.FlagSet, enabled map[string]bool) []string {
+	settings := map[string]bool{}
+	for _, category := range []string{"files", "terminal", "computer", "browser"} {
+		name, value := capabilitySetting(category, enabled[category])
+		settings[name] = value
+	}
+	result := make([]string, 0, len(args)+len(settings))
+	appendSettings := func() {
+		for _, name := range []string{"no-files", "allow-shell", "allow-computer", "no-chrome"} {
+			result = append(result, "--"+name+"="+fmt.Sprint(settings[name]))
+		}
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			appendSettings()
+			return append(result, args[i:]...)
+		}
+		if strings.HasPrefix(arg, "-") {
+			name, _, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+			if _, ok := settings[name]; ok {
+				continue
+			}
+			// A string option's value may itself look like a capability flag.
+			if option := flags.Lookup(name); option != nil && !inline && i+1 < len(args) {
+				if _, isBool := option.Value.(flag.Getter).Get().(bool); !isBool {
+					result = append(result, arg, args[i+1])
+					i++
+					continue
+				}
+			}
+		}
+		result = append(result, arg)
+	}
+	appendSettings()
+	return result
 }
 
 func writePrivateJSON(path string, value any) error {

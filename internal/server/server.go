@@ -47,9 +47,11 @@ type Server struct {
 	Cloud                                     *cloud.Client
 	CLI                                       *cliinstall.Status
 	LocalCLI                                  *LocalCLI
+	SaveCapability                            func(string, bool) error
 	Workspace, GatewayAddr, AccessPath, UIKey string
 	AllowedIPs                                []*net.IPNet
 	mu                                        sync.Mutex
+	capabilityMu                              sync.Mutex
 	rateStart                                 time.Time
 	rateCount                                 int
 	sessions                                  map[string]mcpSession
@@ -221,18 +223,19 @@ func (s *Server) UI() http.Handler {
 	})
 	mux.HandleFunc("POST /api/capability", func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
-			Category string
-			Enabled  bool
+			Category string `json:"category"`
+			Enabled  *bool  `json:"enabled"`
 		}
 		if !decode(w, r, &v) {
 			return
 		}
-		if err := s.Registry.Enable(v.Category, v.Enabled); err != nil {
-			problem(w, 400, err)
+		if !capabilityCategory(v.Category) || v.Enabled == nil {
+			problem(w, 400, errors.New("category and enabled are required for a known capability"))
 			return
 		}
-		if s.Chrome != nil {
-			s.Chrome.Refresh()
+		if err := s.setCapability(v.Category, *v.Enabled); err != nil {
+			problem(w, 500, err)
+			return
 		}
 		write(w, map[string]bool{"ok": true})
 	})

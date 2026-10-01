@@ -107,12 +107,14 @@ func TestBackgroundLifecycleEndToEnd(t *testing.T) {
 	if info().PID != first.PID {
 		t.Fatal("noninteractive invocation changed the daemon")
 	}
+	cli("capability", "computer", "on")
+	cli("capability", "terminal", "off")
 	cli("restart")
 	if info().PID == first.PID {
 		t.Fatal("restart reused the old process")
 	}
-	if err := json.Unmarshal(cli("status"), &state); err != nil || state.Enabled["terminal"] || state.Projects.FullAccess {
-		t.Fatal("run-only settings survived restart", state, err)
+	if err := json.Unmarshal(cli("status"), &state); err != nil || state.Enabled["terminal"] || !state.Enabled["computer"] || state.Projects.FullAccess {
+		t.Fatal("capability choices or session-only access did not restart correctly", state, err)
 	}
 	cli("stop")
 	cli("stop")

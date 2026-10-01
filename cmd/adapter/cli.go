@@ -35,7 +35,7 @@ Usage: readyrig [command] [options]
   projects list|add <path>|remove <id>|use <id>
                               Manage authorized project folders
   capability <category> on|off
-                              Set files, terminal, browser or computer for this run
+                              Set and save files, terminal, browser or computer
   pause / resume              Pause or resume tool execution
   share start [quick|fixed]|stop|status
                               Manage public connections for this run
@@ -52,7 +52,7 @@ Global option: --data-dir PATH (before or after a command)
 With no command, CLI builds open the TUI; desktop builds open the app.
 Use serve --foreground for supervisors or foreground debugging.
 Local control commands support macOS/Linux and require a running instance with the same data directory.
-Full Access is never saved. Runtime switches reset on restart; projects are saved.
+Capability choices and projects are saved. Full Access and pause state are session-only.
 
 Startup options:
 `

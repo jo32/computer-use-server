@@ -173,6 +173,11 @@ class TUITests(unittest.TestCase):
         self.quit()
         self.assertEqual(self.cli('status').returncode, 0, 'quitting TUI stopped the daemon')
         self.assertIn('already configured', self.cli('setup', '--if-needed').stdout)
+        self.cli('restart')
+        state = json.loads(self.cli('status').stdout)
+        self.assertFalse(state['enabled']['terminal'], 'TUI capability choice was lost on restart')
+        self.assertFalse(state['enabled']['browser'])
+        self.assertEqual(state['workspace'], str(project))
 
     def test_first_launch_opens_guide_and_ctrl_c_keeps_daemon(self):
         # Default initial launch must guide the user before entering the dashboard.
