@@ -370,6 +370,7 @@ const readyRigEnglish = {
   "此端口没有提供 Chrome 调试服务": "This port does not provide Chrome debugging",
   "无效的 Chrome WebSocket 调试地址": "Invalid Chrome WebSocket debugging URL",
   "需要 Node.js（20.19+、22.12+ 或更新版）和 npx 来运行官方 Chrome DevTools MCP": "Node.js (20.19+, 22.12+, or later) and npx are required to run the official Chrome DevTools MCP",
+  "检测到的 Node.js 不兼容：%s；%s": "The detected Node.js is incompatible: %s; %s",
   "等待检测 Chrome 远程调试": "Waiting to detect Chrome remote debugging",
   "Chrome DevTools MCP 已关闭": "Chrome DevTools MCP disabled",
   "工具已接入；首次使用时请允许 Chrome 的连接请求。": "Tools connected. Allow Chrome's connection request on first use.",

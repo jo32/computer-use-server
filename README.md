@@ -82,7 +82,7 @@ The official deployment has Google sign-in configured and verified. See the [clo
 ReadyRig starts and bridges the **official Chrome DevTools MCP** subprocess, adding its tools to REST, MCP, OpenAPI, and the Tools page. The application and bridge are written in Go; the official MCP subprocess requires Node.js.
 
 1. In Chrome 144+, open `chrome://inspect/#remote-debugging`, enable remote debugging, and keep Chrome running.
-2. Install Node.js 20.19+, 22.12+, or a later supported version with npx. ReadyRig prefers `chrome-devtools-mcp` on PATH, otherwise it runs `npx --yes chrome-devtools-mcp@1.10.1`. Initial setup downloads and caches the component. Apps launched from Finder also search common Homebrew, Volta, mise, and nvm locations.
+2. Install Node.js 20.19+, 22.12+, or a later supported version with npx. ReadyRig prefers `chrome-devtools-mcp` on PATH, otherwise it runs `npx --yes chrome-devtools-mcp@1.10.1`. Initial setup downloads and caches the component. Apps launched from Finder also search common Homebrew, Volta, mise, and nvm locations, skipping incompatible Node versions already on PATH. The component and its subprocesses use the selected Node installation; if no supported version is found, diagnostics report the incompatible version and path.
 3. Check Chrome status in Connection or Tools. Allow Chrome's connection request when the first tool call prompts you.
 4. Refresh `tools/list` through the current ReadyRig MCP URL to use tools such as `chrome_list_pages`, `chrome_take_snapshot`, and `chrome_click`. Follow the upstream schemas, including `pageId` where required. Clients that cache tools must refresh or reconnect; the gateway does not push tool-list changes.
 

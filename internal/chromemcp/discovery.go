@@ -217,35 +217,3 @@ func probeURL(ctx context.Context, raw string) (target, error) {
 	// Use the validated endpoint, avoiding another discovery/redirect in the child.
 	return target{Key: version.WebSocketDebuggerURL, Args: []string{"--ws-endpoint=" + version.WebSocketDebuggerURL}}, nil
 }
-
-func command(opts Options, t target) (string, []string, []string, error) {
-	args := append([]string{}, t.Args...)
-	args = append(args, "--no-usage-statistics", "--no-performance-crux")
-	if opts.Command != "" {
-		p, err := exec.LookPath(opts.Command)
-		return p, args, os.Environ(), err
-	}
-	if p, err := exec.LookPath("chrome-devtools-mcp"); err == nil {
-		return p, args, os.Environ(), nil
-	}
-	// Finder-launched apps have a minimal PATH. Locate common Node installations too.
-	home, _ := os.UserHomeDir()
-	dirs := []string{"/opt/homebrew/bin", "/usr/local/bin", filepath.Join(home, ".volta/bin"), filepath.Join(home, ".local/share/mise/shims")}
-	nvm, _ := filepath.Glob(filepath.Join(home, ".nvm/versions/node/*/bin"))
-	dirs = append(dirs, nvm...)
-	p, err := exec.LookPath("npx")
-	if err != nil {
-		for _, dir := range dirs {
-			candidate := filepath.Join(dir, "npx")
-			if s, e := os.Stat(candidate); e == nil && !s.IsDir() {
-				p = candidate
-				break
-			}
-		}
-	}
-	if p == "" {
-		return "", nil, nil, fmt.Errorf("需要 Node.js（20.19+、22.12+ 或更新版）和 npx 来运行官方 Chrome DevTools MCP")
-	}
-	env := append(os.Environ(), "PATH="+filepath.Dir(p)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return p, append([]string{"--yes", Package}, args...), env, nil
-}

@@ -2,6 +2,13 @@
 
 Notable changes to ReadyRig are recorded here. For setup and current behavior, see the [README](README.md).
 
+## 0.6.2
+
+### Fixed
+
+- Chrome DevTools MCP can connect when Finder launches ReadyRig with an incompatible Node.js version on PATH. ReadyRig checks installed Node versions, skips unsupported versions, and uses a supported Homebrew, Volta, mise, or nvm installation for the MCP component and its subprocesses.
+- Chrome runtime diagnostics report the detected Node.js version and path when no supported installation is available.
+
 ## 0.6.1
 
 ### Fixed
