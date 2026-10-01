@@ -353,7 +353,7 @@ The default release repository is [jo32/readyrig](https://github.com/jo32/readyr
 
 Updates match the current operating system, architecture, and desktop/browser build. ReadyRig verifies size and SHA-256, plus macOS app signature integrity, signing team, and bundle ID. Signed installations cannot downgrade to ad-hoc signatures. Downloads retry up to three times, duplicate checks are merged, completed downloads survive later network failures, and replacement failures roll back. Concurrent processes cannot update the same installation.
 
-`dev` and source-description builds do not self-update. Read-only or Homebrew-managed installations show manual update instructions without requesting administrator privileges in the background. Restart restores launch arguments, initializes capabilities from those arguments, and generates a new local/temporary agent path. Browser mode requires login through the newly printed dashboard URL. Fixed sharing must be restarted to restore its saved URL.
+`dev` and source-description builds do not self-update. Read-only or Homebrew-managed installations show manual update instructions without requesting administrator privileges in the background. Restart restores launch arguments, initializes capabilities from those arguments, and generates a new local/temporary agent path. The macOS app restarts through LaunchServices as a fresh app process so its menu bar icon and window activation remain available. If an older version has already restarted without a menu bar icon, fully quit ReadyRig and reopen it from Applications once. Browser mode requires login through the newly printed dashboard URL. Fixed sharing must be restarted to restore its saved URL.
 
 ```sh
 bin/readyrig version                 # Show the current version.

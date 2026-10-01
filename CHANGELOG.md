@@ -2,6 +2,13 @@
 
 Notable changes to ReadyRig are recorded here. For setup and current behavior, see the [README](README.md).
 
+## 0.6.6
+
+### Fixed
+
+- The macOS app now relaunches through LaunchServices after an in-app update. This starts a fresh app process and preserves launch arguments, preventing macOS from rejecting its menu bar icon and window activation as an exiting process.
+- If an older version has already restarted with a missing menu bar icon, fully quit ReadyRig and reopen it from Applications once to restore the icon.
+
 ## 0.6.5
 
 Version 0.6.4 did not publish installation packages. This release includes all changes prepared for that version.
