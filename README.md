@@ -45,13 +45,15 @@ The initial data directory must be outside the initial workspace. Adding a proje
 
 ReadyRig has a desktop app and a CLI using the same backend, tools, permission checks, and local execution records. The CLI runs on macOS and Linux with amd64 or arm64 processors; it can configure and use an instance running on that machine. It also controls the desktop app when both builds include the CLI interface and use the same data directory. Linux supports file, terminal, and Chrome MCP tools; native desktop control remains macOS-only.
 
+The macOS App includes a CLI of the same version. On first launch after moving it to Applications, the App registers `~/.local/bin/readyrig` and adds that directory to your shell's startup settings (zsh, bash, or fish), without administrator access. Open a new terminal and run `readyrig` for the TUI or use any subcommand. It attaches to the running App's service and shares its project catalog and logs. App updates also update its bundled CLI; moving the App repairs its command link on the next launch. Separately installed CLI binaries are preserved. The App's Connection page shows CLI installation status and any problem that needs fixing. Update the bundled CLI through the App so its code signature stays valid.
+
 Install without Go, Node.js, or administrator access:
 
 ```sh
 curl -fsSL https://readyrig.getmegaportal.com/install.sh | sh
 ```
 
-The installer places the CLI at `~/.local/bin/readyrig`. Add `~/.local/bin` to your shell's PATH if prompted. It detects the system and processor, pins the latest stable release, verifies the matching `SHA256SUMS`, and replaces the binary atomically. Failed downloads, checksum mismatches, or releases without the CLI commands leave an existing binary intact. Installation does not start a service or enable tools.
+The installer places the CLI at `~/.local/bin/readyrig`, then automatically opens a configuration guide in your terminal. Choose a workspace, terminal access, and Chrome tools; the guide can start ReadyRig in the background when finished. Existing configurations are kept on reinstall. Add `~/.local/bin` to your shell's PATH if prompted. Downloads pin one stable release, verify its `SHA256SUMS`, and replace the binary atomically. Failed downloads, checksum mismatches, or releases without CLI commands leave an existing binary intact. Use `--no-setup` (or `READYRIG_NO_SETUP=1`) for unattended installation. Without an interactive terminal, the installer prints the command to open the guide later.
 
 To inspect the installer first or select a version and destination:
 
@@ -63,15 +65,25 @@ sh /tmp/readyrig-install.sh --version X.Y.Z --install-dir "$HOME/.local/bin"
 
 `--repo owner/repo` selects another public GitHub release repository. The installer is also included as `install.sh` in new releases. For source builds, `make cli` creates `bin/readyrig` and its compatibility copy `bin/readyrig-web`.
 
-Configure a VM and start ReadyRig:
+Open the terminal dashboard:
+
+```sh
+readyrig
+```
+
+On first launch it opens the setup guide; on later launches it starts or attaches to the service. The TUI shows live connection and capability status, approved projects, tools, and recent activity. Use Tab or 1–4 to change views, arrows or j/k to select items, `s` to start/stop, `p` to pause/resume, and `f`/`t`/`b`/`c` to toggle files/terminal/browser/computer for the current run. In Projects, `a` adds a folder, Enter selects it, and `d` removes access after confirmation. `h` toggles temporary public sharing. `q` or Ctrl-C closes the TUI and keeps the service running. Noninteractive invocation prints command help and returns.
+
+Run `readyrig setup` to change saved startup settings while the service is stopped. For scripted configuration and lifecycle control:
 
 ```sh
 readyrig init --workspace ~/agent_workspace --allow-shell --no-chrome
 readyrig config show
 readyrig serve
+readyrig stop
+readyrig restart
 ```
 
-`init` saves startup settings in private `cli.json` and creates the initial workspace. CLI builds also run the service when invoked without a command. `serve` and `web` read these settings; the desktop app keeps its existing launch defaults. Existing project catalogs are preserved: `--workspace` initializes the first project, and `projects add/use` manages later folders. Defaults are overridden by saved settings, then the supported `READYRIG_*` environment variables, then explicit launch flags. Both listeners use loopback by default. The dashboard remains available at the printed URL, so a headless VM can also use it through SSH port forwarding.
+`init` saves startup settings in private `cli.json` and creates the initial workspace. On macOS/Linux, `serve` and `web` launch a detached background process, wait until both listeners are ready, print its connection URLs and private `daemon.log` location, and return to your shell. Repeated starts reuse a running instance; `restart` applies saved settings and launch overrides. `stop` waits for a clean shutdown. Use `serve --foreground` for debugging, containers, and process supervisors. The desktop app reads the same saved startup settings on launch; Windows retains foreground browser mode. Quit the desktop app before changing startup settings with `config set`, `init`, or `setup`, then reopen it. Runtime project and capability commands work while the app is open. Existing project catalogs are preserved: `--workspace` initializes the first project, and `projects add/use` manages later folders. Defaults are overridden by saved settings, then supported `READYRIG_*` environment variables, then explicit launch flags. Both listeners use loopback by default. The dashboard remains available at the printed URL, including through SSH port forwarding for a headless VM.
 
 Change saved startup settings while the instance is stopped:
 
@@ -81,7 +93,7 @@ readyrig config set no-chrome true
 readyrig config set gateway 127.0.0.1:7442
 ```
 
-Use a second terminal while the app or service is running:
+Use commands while the app or background service is running:
 
 ```sh
 readyrig status
@@ -127,7 +139,7 @@ readyrig service restart
 readyrig service stop
 ```
 
-`install` writes `readyrig.service` in the user's systemd configuration directory and reloads the manager. `start` enables it for future user-manager starts. For startup at boot and continued operation after logout, an administrator can enable lingering with `sudo loginctl enable-linger "$USER"`. Minimal containers without systemd should run `readyrig serve` under their existing supervisor. `service print` shows the generated unit; `service uninstall` stops, disables, and removes the matching unit while retaining application data. Only one ReadyRig user unit is installed per user.
+`install` writes `readyrig.service` in the user's systemd configuration directory and reloads the manager. Its command uses `serve --foreground` so systemd tracks the process; running `service install` again upgrades a matching older unit. `start` enables it for future user-manager starts. For startup at boot and continued operation after logout, an administrator can enable lingering with `sudo loginctl enable-linger "$USER"`. Minimal containers without systemd should run `readyrig serve --foreground` under their existing supervisor. `service print` shows the generated unit; `service uninstall` stops, disables, and removes the matching unit while retaining application data. Only one ReadyRig user unit is installed per user. Use `service stop/restart` when systemd manages the instance.
 
 Use global `--data-dir /private/path` before or after a command for another instance, including `init`, `serve`, configuration, and service installation. Run the control commands as the same OS user. The CLI connects through a Unix socket in a private temporary directory, with `0600` socket permissions. Private `control.json` stores only its path, without a dashboard key or other credential; both are removed on clean shutdown. Browser-origin requests are rejected on this interface. CLI management is never exposed through the public agent connection. The existing Windows web service continues to use its browser console for local management.
 
@@ -136,10 +148,10 @@ Use global `--data-dir /private/path` before or after a command for another inst
 - **Activity** shows live status, filters by session, category, and result, searches arguments and errors, and provides request/response details, pagination, and NDJSON export. Command output updates during execution without consuming unread `write_stdin` output. Individual calls can be cancelled while retaining their output.
 - **Desktop replay** displays saved screenshots and action markers frame by frame or as playback, with a timeline and speed controls. It loads screenshots and actions from up to the latest 5,000 desktop calls. Playback displays history without executing actions again; missing frames are identified explicitly.
 - **Tools** shows registered tools, JSON Schema, and example arguments. Test calls execute real operations and are logged. Detailed results load on demand, with readable terminal output, files, directory tables, and search results, plus expandable raw JSON.
-- **Connection** provides the current agent URL and MCP configuration, system permission status, capability switches, sharing, and software updates.
+- **Connection** provides the current agent URL and MCP configuration, system permission status, capability switches, sharing, and software updates. **Local configuration → Copy setup prompt** gives a local terminal-capable agent CLI instructions using this instance’s exact executable and data directory. The preview and copied prompt follow the selected language and explain which changes need a restart. This entry is available only in the local console.
 - **Pause control** cancels active calls and terminal process groups and rejects new tool calls. Disabling one capability cancels only calls in that category.
 
-File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations can be enabled locally for a run, explicitly through `--allow-shell` and `--allow-computer`, or through saved CLI startup settings for `serve`/`web`. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
+File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations can be enabled locally for a run, explicitly through `--allow-shell` and `--allow-computer`, or through saved CLI startup settings for the app and `serve`/`web`. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
 
 On macOS, left-click the menu bar computer icon to open the quick panel; clicking outside dismisses it. Right-click for the native menu to open the full window, pause or resume, check for updates, or quit. Closing the main window keeps the service running; quitting stops it. The icon animates during tool execution, indicates pause, and respects Reduce Motion.
 
@@ -200,9 +212,9 @@ See the [upstream guide to connecting to a running Chrome instance](https://gith
 
 ### Debugging file authorization on macOS
 
-Chrome 144+ remote debugging exposes a WebSocket endpoint; a `404` from `/json/version` is expected in this mode. ReadyRig reads the local URL from `DevToolsActivePort` and passes it directly to the official MCP subprocess, which does not need to read the profile again.
+Chrome 144+ remote debugging exposes a WebSocket endpoint; a `404` from `/json/version` is expected in this mode. ReadyRig recognizes the approval server on local port `9222` (or the explicitly configured debugging URL) and connects to `/devtools/browser` without needing to read `DevToolsActivePort`. Detection uses an unsupported WebSocket path that Chrome rejects before asking for approval, so background checks do not trigger permission dialogs. The first browser operation still requires approval in Chrome. The endpoint file remains a fallback for discovering other ports.
 
-If macOS blocks the file, click **Authorize debugging file** in the desktop app and select `DevToolsActivePort` inside the Chrome folder. ReadyRig then detects the endpoint again. Cancelling the dialog leaves permissions unchanged. If access is still denied, check ReadyRig's data access under **System Settings → Privacy & Security**; in browser mode, grant access to the terminal that starts ReadyRig. You must still approve the first browser connection in Chrome. Only the local desktop window can open this system dialog.
+If the local debugging server cannot be detected and macOS blocks the endpoint file, click **Authorize debugging file** in the desktop app and select `DevToolsActivePort` inside the Chrome folder. ReadyRig then detects the endpoint again. Alternatively, configure `--chrome-browser-url` with the address shown in Chrome's remote debugging page to connect without reading the file. Cancelling the dialog leaves permissions unchanged. If access is still denied, check ReadyRig's data access under **System Settings → Privacy & Security**; in browser mode, grant access to the terminal that starts ReadyRig. You must still approve the first browser connection in Chrome. Only the local desktop window can open this system dialog.
 
 ## Remote access and sharing
 

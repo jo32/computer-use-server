@@ -2,6 +2,25 @@
 
 Notable changes to ReadyRig are recorded here. For setup and current behavior, see the [README](README.md).
 
+## 0.6.4
+
+### Added
+
+- An interactive setup guide that opens automatically after curl installation. Reinstalling preserves existing settings; unattended installation can skip the guide.
+- A terminal dashboard opened by running `readyrig` without a command. It manages service state, capabilities, sharing, projects, tools, and recent activity; exiting keeps the service running.
+- A CLI bundled with the macOS app, registered in the user's command path on first launch and updated with the app. Separately installed CLI binaries are preserved.
+- A local setup prompt in the app's Connection page, with English and Chinese copy, the matching CLI executable, and the current data directory. Local agents can inspect, configure, and verify ReadyRig through CLI commands.
+
+### Changed
+
+- `serve` and `web` start a detached daemon on macOS/Linux, wait for readiness, and return to the terminal. Added `stop` and `restart`; `--foreground` remains available for supervisors and debugging, including systemd units.
+- The app reads saved CLI startup settings on launch. Project management and runtime switches work while the app is open; startup settings are changed while the instance is stopped.
+- Website installation instructions describe the guide and default terminal dashboard. Removed obsolete documentation screenshots.
+
+### Fixed
+
+- Chrome approval-mode debugging can be detected through its local server before reading protected profile files. Background detection uses a rejected probe path to avoid opening approval dialogs; browser operations still require Chrome approval.
+
 ## 0.6.3
 
 ### Added
