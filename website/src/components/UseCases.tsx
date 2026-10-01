@@ -4,9 +4,20 @@ import { Icon } from './Icon'
 import type { IconName } from './Icon'
 import { Tabs } from './Tabs'
 
-type UseCase = 'files' | 'development' | 'apps' | 'sharing'
+type UseCase = 'computers' | 'files' | 'development' | 'apps' | 'sharing'
 
 const casesData: { value: UseCase; label: string; icon: IconName; title: string; body: string; prompt: string; steps: string[]; tools: string[]; note: string }[] = [
+  {
+    value: 'computers',
+    label: '多台电脑',
+    icon: 'monitor',
+    title: '同一个 Agent，使用不同电脑的环境。',
+    body: '在工作 Mac 上处理资料与网页，在 Linux 服务器上运行构建，在 VM 中测试。绑定同一账号后，Agent 可以查询这些电脑的状态和连接，再按你的任务选择目标。',
+    prompt: '在 Linux 服务器上运行 website 的测试，再用工作 Mac 的 Chrome 检查官网，分别返回两台电脑的结果。',
+    steps: ['查询账号下的电脑与在线状态', '分别接入你指定的电脑，使用已开放的工具', '返回每台电脑的执行结果'],
+    tools: ['电脑列表', '云端控制', '各自的工具与项目'],
+    note: '电脑需要保持在线并运行 ReadyRig。每台电脑的项目目录与权限分别设置。',
+  },
   {
     value: 'files',
     label: '本机资料',
@@ -56,7 +67,7 @@ const casesData: { value: UseCase; label: string; icon: IconName; title: string;
 export function UseCases() {
   const { t } = useI18n()
   const cases = translateData(casesData, t)
-  const [selected, setSelected] = useState<UseCase>('files')
+  const [selected, setSelected] = useState<UseCase>('computers')
   const current = cases.find((item) => item.value === selected)!
 
   return (
@@ -68,7 +79,7 @@ export function UseCases() {
           <br />
           <span>{t('事情在你的电脑上完成。')}</span>
         </h2>
-        <p>{t('从自己的资料与环境开始，也能把开放的工具临时分享给别人。')}</p>
+        <p>{t('按任务使用不同电脑的资料与环境，也能把开放的工具临时分享给别人。')}</p>
       </div>
       <Tabs label={t('使用场景')} options={cases.map(({ value, label }) => ({ value, label }))} value={selected} onChange={setSelected} className="use-case-tabs">
         <article className="use-case-panel">

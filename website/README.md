@@ -66,8 +66,8 @@ The product is named **ReadyRig**, and the package is `readyrig-website`. Theme 
 ## Content and appearance
 
 - `src/App.tsx`: introduction, features, getting started, FAQ, downloads, and footer.
-- `src/components/UseCases.tsx`: interactive examples for local files, development environments, browser/desktop operations, and temporary sharing.
-- `src/components/RemoteAccess.tsx`: cloud-to-local connection diagram, platform demo links, and sharing permission boundaries.
+- `src/components/UseCases.tsx`: interactive examples for multiple computers, local files, development environments, browser/desktop operations, and temporary sharing.
+- `src/components/RemoteAccess.tsx`: one-agent-to-many-computers diagram, cloud prompt onboarding, platform demo links, and sharing permission boundaries.
 - `src/components/AppPreview.tsx`: interactive preview and prompt, MCP, and REST examples.
 - `src/config.ts`: link and download configuration.
 - `public/install.sh`: checksum-verified curl installer for the ReadyRig CLI on macOS/Linux (amd64/arm64). The download section includes a copyable installation command and links to the CLI/VM guide. Override its URL with `VITE_CLI_INSTALL_URL` if needed. Deploy the website and publish CLI-capable release binaries before promoting the installation link; the installer rejects older binaries without the CLI commands.
@@ -80,7 +80,7 @@ Repository links use the Invertocat from [GitHub's official brand resources](htt
 
 ## Scenarios and agent connection guidance
 
-The website introduces using local tools from online agents and temporarily sharing enabled tools with trusted people before showing the console and tool list. Scenario tasks and steps are examples that do not execute on the page.
+The website leads with one agent managing multiple computers bound to the same account. The cloud prompt lets agents with HTTP access discover machines, choose a target, and manage tool switches, sharing, and pause controls. Project folders, Full Access, and system permissions are configured locally on each machine; computers must stay online and run ReadyRig. Single-computer public-link and MCP connections remain available. Scenario tasks and steps are examples that do not execute on the page.
 
 Product descriptions are based on official sources:
 

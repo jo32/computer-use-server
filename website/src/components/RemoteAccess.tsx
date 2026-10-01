@@ -7,36 +7,65 @@ export function CloudConnection() {
   const { t } = useI18n()
   return (
     <div className="cloud-connection">
-      <div className="connection-map" aria-label={t('云端 Agent 通过 ReadyRig 连接你的电脑')}>
+      <div className="connection-map" aria-label={t('一个 Agent 通过同一账号连接 Mac、Linux 服务器和 VM')}>
         <div className="map-node">
           <Icon name="link" width="23" height="23" />
           <div>
-            <strong>{t('云端 Agent')}</strong>
-            <span>{t('对话、规划、发起任务')}</span>
+            <strong>{t('一个云端 Agent')}</strong>
+            <span>{t('查询电脑，按任务选择环境')}</span>
           </div>
         </div>
         <div className="map-route">
-          <span>{t('公网连接')}</span>
+          <span>{t('云端 Prompt')}</span>
           <i aria-hidden="true" />
         </div>
         <div className="map-node map-readyrig">
           <AppIcon width="43" height="43" />
           <div>
             <strong>ReadyRig</strong>
-            <span>{t('连接、权限、执行记录')}</span>
+            <span>{t('同一账号，统一查询与控制')}</span>
           </div>
         </div>
         <div className="map-route">
-          <span>{t('本机执行')}</span>
+          <span>{t('分别接入')}</span>
           <i aria-hidden="true" />
         </div>
-        <div className="map-node">
-          <Icon name="monitor" width="24" height="24" />
-          <div>
-            <strong>{t('你的电脑')}</strong>
-            <span>{t('文件、终端、浏览器、桌面')}</span>
+        <div className="map-computers">
+          <div className="map-computer">
+            <Icon name="monitor" width="20" height="20" />
+            <div><strong>{t('工作 Mac')}</strong><span>{t('资料、Chrome 与桌面')}</span></div>
+          </div>
+          <div className="map-computer">
+            <Icon name="terminal" width="20" height="20" />
+            <div><strong>{t('Linux 服务器')}</strong><span>{t('代码、构建与终端')}</span></div>
+          </div>
+          <div className="map-computer">
+            <Icon name="folder" width="20" height="20" />
+            <div><strong>{t('测试 VM')}</strong><span>{t('项目与测试环境')}</span></div>
           </div>
         </div>
+      </div>
+      <div className="cloud-onboarding">
+        <div className="cloud-onboarding-heading">
+          <h2>{t('一份云端 Prompt，接入你的多台电脑。')}</h2>
+          <a className="text-link" href="/console">
+            {t('打开设备控制台')}<Icon name="chevron" width="13" height="13" />
+          </a>
+        </div>
+        <ol className="cloud-start">
+          <li>
+            <span>1</span>
+            <div><h3>{t('绑定同一个账号')}</h3><p>{t('每台电脑运行 ReadyRig，通过 Google 登录绑定。')}</p></div>
+          </li>
+          <li>
+            <span>2</span>
+            <div><h3>{t('复制云端 Prompt')}</h3><p>{t('在设备控制台复制一次，交给你的 Agent。')}</p></div>
+          </li>
+          <li>
+            <span>3</span>
+            <div><h3>{t('按任务选择电脑')}</h3><p>{t('查询状态与连接，按你的要求开关工具和分享。')}</p></div>
+          </li>
+        </ol>
       </div>
       <div className="platform-intro">
         <span className="eyebrow">{t('为这类线上 Agent 扩展本机能力')}</span>
@@ -59,7 +88,7 @@ export function SharingSection() {
             <br />
             {t('临时分享给可信任的人。')}
           </h2>
-          <p>{t('把一次性公网接入信息交给朋友或协作者。他们的 Agent 就能调用你开放的工具，在你的电脑上处理任务。权限开关始终由你在本机控制。')}</p>
+          <p>{t('把一次性公网接入信息交给朋友或协作者。他们的 Agent 就能调用你开放的工具，在你的电脑上处理任务。你可以在本机或自己的设备控制台暂停控制、关闭分享。')}</p>
           <a className="text-link" href="#getting-started">
             {t('看看如何开启分享')}
             <Icon name="chevron" width="14" height="14" />

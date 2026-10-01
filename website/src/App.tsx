@@ -33,9 +33,9 @@ const featuresData: { number: string; icon: IconName; title: string; body: strin
   {
     number: '04',
     icon: 'shield',
-    title: '权限的开关，留在你手上。',
-    body: '分别控制文件、终端、浏览器与桌面能力。随时暂停新调用、取消正在执行的任务。',
-    tags: ['本机权限控制', '随时暂停'],
+    title: '每台电脑，分别控制。',
+    body: '在本机或云端调整工具开关，暂停或恢复控制。每台电脑的项目目录和系统权限仍在本机设置。',
+    tags: ['本机与云端控制', '每台电脑独立设置'],
   },
 ]
 
@@ -148,8 +148,8 @@ function Download() {
           <AppIcon width="90" height="90" loading="lazy" />
           <div>
             <span className="eyebrow">{t('准备好开始了吗')}</span>
-            <h2 id="download-title">{t('连接你的云端 Agent。')}</h2>
-            <p>{t('装好 ReadyRig，开放工具，把 Prompt 交给它。')}</p>
+            <h2 id="download-title">{t('把你的电脑，连接起来。')}</h2>
+            <p>{t('在每台电脑安装 ReadyRig，绑定同一账号，把云端 Prompt 交给 Agent。')}</p>
           </div>
         </div>
         <div className="download-actions">
@@ -207,31 +207,31 @@ export default function App() {
             <div className="hero-kicker">
               <span>ReadyRig</span>
               <i />
-              {t('云端发起任务，本机执行。')}
+              {t('同一账号，多台电脑。')}
             </div>
             <h1 id="hero-title">
-              {t('云端的 Agent，')}
+              {t('一个 Agent，')}
               <br />
-              <span>{t('也能用你的电脑。')}</span>
+              <span>{t('管理多台电脑。')}</span>
             </h1>
             <p className="hero-description">
-              {t('让线上 Agent 使用电脑上的文件、终端、浏览器和桌面。')}
+              {t('把 Mac、Linux 服务器和 VM 连接到同一个账号。')}
               <br />
-              {t('让任务在你的环境里完成，也能将已开放的工具分享给可信任的人。')}
+              {t('Agent 查询电脑、选择环境，使用每台电脑开放的文件、终端、浏览器和桌面工具。')}
             </p>
             <div className="hero-actions">
-              <a className="button button-primary" href="#download">
-                <Icon name="apple" width="18" height="18" />
-                {t('下载 macOS 版')}
+              <a className="button button-primary" href="/console">
+                <Icon name="monitor" width="18" height="18" />
+                {t('管理我的电脑')}
               </a>
-              <a className="button button-secondary" href="#use-cases">
-                {t('看看能做什么')}
+              <a className="button button-secondary" href="#download">
+                {t('下载与安装')}
               </a>
             </div>
             <div className="hero-meta">
-              <span>macOS 12+</span>
+              <span>macOS · Linux</span>
               <i />
-              <span>Apple Silicon & Intel</span>
+              <span>{t('桌面 App + CLI')}</span>
               <i />
               <span>REST + MCP</span>
             </div>
@@ -280,8 +280,8 @@ export default function App() {
         </section>
         <section className="getting-started section-width" id="getting-started" aria-labelledby="getting-started-title">
           <div className="setup-copy">
-            <span className="eyebrow">{t('连接你的线上 Agent')}</span>
-            <h2 id="getting-started-title">{t('三步，开始本机任务。')}</h2>
+            <span className="eyebrow">{t('也支持直接连接')}</span>
+            <h2 id="getting-started-title">{t('单台电脑，也能直接接入。')}</h2>
             <ol className="steps">
               <li>
                 <span className="step-number">1</span>
@@ -318,6 +318,13 @@ export default function App() {
             <h2 id="faq-title">{t('你可能想问。')}</h2>
           </div>
           <div className="faq-list">
+            <details>
+              <summary>
+                {t('一个 Agent 可以管理多台电脑吗？')}
+                <Icon name="chevron" width="16" height="16" />
+              </summary>
+              <p>{t('可以。在每台电脑运行 ReadyRig，绑定同一个 Google 账号，再从设备控制台复制「云端 Prompt」给支持网络请求的 Agent。它能查询这些电脑的状态与连接，按你的要求选择电脑、开关工具与分享、暂停或恢复控制。电脑需要保持在线；项目目录、Full Access 和系统权限仍在各电脑本地设置。')}</p>
+            </details>
             <details>
               <summary>
                 {t('ReadyRig 在整个任务里做什么？')}
@@ -367,7 +374,7 @@ export default function App() {
               </summary>
               <p>
                 {t(
-                  '可以。文件工具默认只访问你添加的项目目录，终端与桌面能力默认关闭。各项开关和暂停控制只能在本机修改。终端命令使用当前账户权限执行，项目目录限制不等同于系统沙箱。',
+                  '可以。文件工具默认只访问你添加的项目目录，终端与桌面能力默认关闭。工具开关与暂停控制可以在本机或账号设备控制台管理，项目目录、Full Access 和系统权限由本机设置。终端命令使用当前账户权限执行，项目目录限制不等同于系统沙箱。',
                 )}
               </p>
             </details>
@@ -388,7 +395,7 @@ export default function App() {
             <AppIcon width="28" height="28" loading="lazy" />
             <span>ReadyRig</span>
           </a>
-          <span className="footer-tagline">{t('云端的 Agent，本机的工具。')}</span>
+          <span className="footer-tagline">{t('一个 Agent，你的多台电脑。')}</span>
         </div>
         <nav aria-label={t('页脚导航')}>
           <a href={site.docs} target="_blank" rel="noopener noreferrer">
