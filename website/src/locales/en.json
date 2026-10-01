@@ -439,5 +439,8 @@
   "云端控制": "Cloud controls",
   "各自的工具与项目": "Each computer’s tools and projects",
   "电脑需要保持在线并运行 ReadyRig。每台电脑的项目目录与权限分别设置。": "Computers must stay online and run ReadyRig. Project folders and permissions are configured separately on each.",
-  "按任务使用不同电脑的资料与环境，也能把开放的工具临时分享给别人。": "Use files and environments across your computers, or temporarily share enabled tools with others."
+  "按任务使用不同电脑的资料与环境，也能把开放的工具临时分享给别人。": "Use files and environments across your computers, or temporarily share enabled tools with others.",
+  "控制台": "Console",
+  "打开导航菜单": "Open navigation menu",
+  "关闭导航菜单": "Close navigation menu"
 }

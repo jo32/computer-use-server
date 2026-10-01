@@ -1,5 +1,5 @@
 import { useI18n, translateData, LanguageSelect } from './i18n'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { AppIcon, GitHubIcon, Icon } from './components/Icon'
 import type { IconName } from './components/Icon'
 import { AppPreview, ConnectionExample } from './components/AppPreview'
@@ -87,6 +87,9 @@ function ThemeButton() {
 function Header() {
   const { t } = useI18n()
   const [active, setActive] = useState('overview')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuId = useId()
+  const menuButton = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const sections = ['overview', 'use-cases', 'getting-started', 'download']
     const observer = new IntersectionObserver(
@@ -104,32 +107,55 @@ function Header() {
 
   return (
     <header className="site-header">
-      <div className="header-inner">
-        <a className="wordmark" href="#overview" aria-label={t('ReadyRig 首页')}>
+      <div className="header-inner" onKeyDown={(event) => {
+        if (event.key === 'Escape' && menuOpen) {
+          event.preventDefault()
+          setMenuOpen(false)
+          menuButton.current?.focus()
+        }
+      }}>
+        <a className="wordmark" href="#overview" aria-label={t('ReadyRig 首页')} onClick={() => setMenuOpen(false)}>
           <AppIcon width="34" height="34" />
           <span>ReadyRig</span>
         </a>
-        <nav className="site-nav segmented" aria-label={t('主导航')}>
-          {[
-            { id: 'overview', label: t('概览') },
-            { id: 'use-cases', label: t('场景') },
-            { id: 'getting-started', label: t('上手') },
-          ].map((item) => (
-            <a key={item.id} className={active === item.id ? 'active' : ''} href={`#${item.id}`} aria-current={active === item.id ? 'location' : undefined}>
-              {item.label}
+        <a className="mobile-console-link button button-secondary" href="/console" aria-label={t('设备控制台')}>
+          {t('控制台')}
+        </a>
+        <button
+          ref={menuButton}
+          type="button"
+          className="mobile-menu-toggle icon-button"
+          aria-label={t(menuOpen ? '关闭导航菜单' : '打开导航菜单')}
+          aria-expanded={menuOpen}
+          aria-controls={menuId}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <Icon name={menuOpen ? 'close' : 'menu'} width="21" height="21" />
+        </button>
+        <div id={menuId} className={`header-menu${menuOpen ? ' is-open' : ''}`}>
+          <nav className="site-nav segmented" aria-label={t('主导航')}>
+            {[
+              { id: 'overview', label: t('概览') },
+              { id: 'use-cases', label: t('场景') },
+              { id: 'getting-started', label: t('上手') },
+            ].map((item) => (
+              <a key={item.id} className={active === item.id ? 'active' : ''} href={`#${item.id}`} aria-current={active === item.id ? 'location' : undefined} onClick={() => setMenuOpen(false)}>
+                {item.label}
+              </a>
+            ))}
+          </nav>
+          <div className="header-actions">
+            <a className="header-console-link button button-small button-secondary" href="/console">{t('设备控制台')}</a>
+            <a href={site.repository} className="icon-button github-link" aria-label={t('GitHub 仓库')} target="_blank" rel="noopener noreferrer">
+              <GitHubIcon width={19} height={19} />
             </a>
-          ))}
-        </nav>
-        <div className="header-actions"><a className="button button-small button-secondary" href="/console">{t("设备控制台")}</a>
-          <a href={site.repository} className="icon-button github-link" aria-label={t('GitHub 仓库')} target="_blank" rel="noopener noreferrer">
-            <GitHubIcon width={19} height={19} />
-          </a>
-          <LanguageSelect />
-          <ThemeButton />
-          <a className="button button-small button-primary" href="#download">
-            {t('下载')}
-            <span className="header-download-extra">ReadyRig</span>
-          </a>
+            <LanguageSelect />
+            <ThemeButton />
+            <a className="button button-small button-primary" href="#download" onClick={() => setMenuOpen(false)}>
+              {t('下载')}
+              <span className="header-download-extra">ReadyRig</span>
+            </a>
+          </div>
         </div>
       </div>
     </header>

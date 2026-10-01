@@ -81,6 +81,8 @@ code, pre { font-family: var(--code); }
 .segmented > button:hover, .segmented > a:hover { color: var(--fg); }
 .segmented > button[aria-selected="true"], .segmented > a.active { background: var(--seg-thumb); color: var(--fg); box-shadow: var(--seg-edge); }
 .site-nav { position: static; transform: none; flex-shrink: 0; }
+.header-menu { display: contents; }
+.header-inner > .mobile-console-link, .header-inner > .mobile-menu-toggle { display: none; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .icon-button { width: 36px; height: 36px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .icon-button:hover { background: var(--pill); color: var(--fg); }
@@ -371,16 +373,9 @@ h2 { font-size: clamp(29px, 3.5vw, 38px); line-height: 1.5; font-weight: 580; le
   .sharing-copy h2 { font-size: 26px; }
 }
 @media (max-width: 680px) {
-  html { scroll-padding-top: 115px; }
   .section-width { padding-inline: 20px; }
-  .header-inner { height: 68px; padding-inline: 17px; gap: 10px; }
-  .site-nav { position: static; transform: none; padding: 3px; gap: 1px; }
-  .site-nav > a { font-size: 12px; padding: 6px 9px; }
   .wordmark { font-size: 17px; gap: 5px; }
   .wordmark .app-icon { width: 30px; height: 30px; }
-  .header-actions { gap: 4px; }
-  .github-link, .header-download-extra { display: none; }
-  .button-small { padding: 7px 10px; font-size: 12px; min-height: 31px; margin-left: 0; }
   .icon-button { width: 30px; height: 32px; }
   .hero { padding-top: 39px; }
   .hero-icon { width: 88px; height: 88px; margin-bottom: 15px; }
@@ -519,10 +514,6 @@ h2 { font-size: clamp(29px, 3.5vw, 38px); line-height: 1.5; font-weight: 580; le
   .footer-copyright { font-size: 10px; }
 }
 @media (max-width: 380px) {
-  .header-inner { padding-inline: 10px; gap: 6px; }
-  .site-nav > a { padding-inline: 5px; }
-  .header-actions .icon-button { width: 28px; }
-  .button-small { padding-inline: 9px; }
   .wordmark { font-size: 16px; }
   .wordmark .app-icon { width: 26px; height: 26px; }
   .section-width { padding-inline: 15px; }
@@ -541,5 +532,19 @@ h2 { font-size: clamp(29px, 3.5vw, 38px); line-height: 1.5; font-weight: 580; le
 }
 
 .language-select { background: var(--card); border: 1px solid var(--line); border-radius: 7px; padding: 7px 5px; font-size: 12px; max-width: 112px; cursor: pointer; }
-@media (max-width: 1120px) { .site-nav { position: static; transform: none; } .header-inner { flex-wrap: wrap; height: auto; min-height: 74px; gap: 12px; padding-block: 14px; } }
-@media (max-width: 600px) { .header-inner { padding-inline: 16px; gap: 10px; } .site-nav { order: 3; width: 100%; justify-content: center; } .header-actions { gap: 3px; } .header-download-extra { display: none; } .language-select { max-width: 100px; } }
+@media (max-width: 1000px) {
+  html { scroll-padding-top: 88px; }
+  .header-inner { height: auto; min-height: 64px; flex-wrap: wrap; gap: 8px; padding: 10px 16px; }
+  .header-inner > .wordmark { margin-right: auto; }
+  .header-inner > .mobile-console-link { display: inline-flex; min-height: 36px; padding: 8px 12px; font-size: 12px; border-radius: 8px; }
+  .header-inner > .mobile-menu-toggle { display: inline-flex; width: 40px; height: 44px; color: var(--fg-2); }
+  .header-menu { display: none; flex-basis: 100%; min-width: 0; padding-top: 12px; margin-top: 2px; border-top: 1px solid var(--line); }
+  .header-menu.is-open { display: grid; }
+  .site-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; padding: 4px; gap: 3px; text-align: center; }
+  .site-nav > a { display: flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 5px; font-size: 13px; }
+  .header-actions { justify-content: space-between; gap: 8px; padding-block: 14px 2px; }
+  .header-actions .header-console-link, .header-actions .github-link, .header-download-extra { display: none; }
+  .header-actions .language-select { flex: 1; min-width: 0; max-width: none; min-height: 44px; padding-inline: 10px; }
+  .header-actions .icon-button { width: 40px; height: 44px; }
+  .header-actions .button-small { min-height: 44px; margin-left: 0; padding: 10px 14px; font-size: 13px; }
+}
