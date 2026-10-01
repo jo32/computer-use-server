@@ -54,7 +54,7 @@ jobs:
           NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: |
           python3 - <<'PY'
-          import base64,os,pathlib,re,secrets,subprocess
+          import base64,os,pathlib,re,secrets,shlex,subprocess
           required=['MACOS_CERTIFICATE_P12_BASE64','MACOS_CERTIFICATE_PASSWORD','APPLE_NOTARY_KEY_BASE64','NOTARY_KEY_ID','NOTARY_ISSUER_ID']
           for name in required:
               if not os.environ.get(name): raise SystemExit(f'{name} is required; unsigned releases are disabled')
@@ -67,13 +67,24 @@ jobs:
               path.chmod(0o600)
           password=secrets.token_urlsafe(40)
           print(f'::add-mask::{password}')
-          commands=[['security','create-keychain','-p',password,str(keychain)],['security','set-keychain-settings','-lut','7200',str(keychain)],['security','unlock-keychain','-p',password,str(keychain)],['security','import',str(cert),'-k',str(keychain),'-P',os.environ['MACOS_CERTIFICATE_PASSWORD'],'-T','/usr/bin/codesign','-T','/usr/bin/security'],['security','set-key-partition-list','-S','apple-tool:,apple:,codesign:','-s','-k',password,str(keychain)]]
+          existing=shlex.split(subprocess.check_output(['security','list-keychains','-d','user'],text=True))
+          commands=[['security','create-keychain','-p',password,str(keychain)],['security','set-keychain-settings','-lut','7200',str(keychain)],['security','unlock-keychain','-p',password,str(keychain)],['security','import',str(cert),'-k',str(keychain),'-P',os.environ['MACOS_CERTIFICATE_PASSWORD'],'-T','/usr/bin/codesign','-T','/usr/bin/security'],['security','set-key-partition-list','-S','apple-tool:,apple:,codesign:','-s','-k',password,str(keychain)],['security','list-keychains','-d','user','-s',str(keychain),*existing]]
           for command in commands:
               result=subprocess.run(command,capture_output=True,text=True)
               if result.returncode: raise SystemExit(f'Failed to prepare signing keychain at {command[1]}')
           identities=subprocess.check_output(['security','find-identity','-v','-p','codesigning',str(keychain)],text=True)
           match=re.search(r'([A-F0-9]{40}) "Developer ID Application:[^"]+"',identities)
           if not match: raise SystemExit('No valid Developer ID Application identity found')
+          # Verify real signing before spending time building every release target.
+          probe=root/'readyrig-signing-probe'
+          result=subprocess.run(['cc','-x','c','-o',str(probe),'-'],input='int main(void) { return 0; }',capture_output=True,text=True)
+          if result.returncode: raise SystemExit('Failed to compile the signing probe')
+          try:
+              env=dict(os.environ,SIGN_IDENTITY=match[1],SIGN_KEYCHAIN=str(keychain),REQUIRE_DEVELOPER_ID='1')
+              result=subprocess.run(['bash','scripts/sign-macos.sh',str(probe),'dev.local.relay.signing-probe'],env=env,capture_output=True,text=True)
+              if result.returncode: raise SystemExit('Developer ID signing preflight failed: '+result.stderr)
+          finally:
+              probe.unlink(missing_ok=True)
           with open(os.environ['GITHUB_ENV'],'a') as f:
               for name,value in [('SIGN_IDENTITY',match[1]),('SIGN_KEYCHAIN',str(keychain)),('NOTARY_KEY_PATH',str(key)),('NOTARY_KEY_ID',os.environ['NOTARY_KEY_ID']),('NOTARY_ISSUER_ID',os.environ['NOTARY_ISSUER_ID'])]:
                   if '\n' in value or '\r' in value: raise SystemExit(f'Invalid {name}')
