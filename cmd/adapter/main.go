@@ -22,7 +22,7 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(); err != nil && err != flag.ErrHelp {
 		log.Fatal(err)
 	}
 }
@@ -35,57 +35,73 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	args := os.Args[1:]
-	mode := "desktop"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		mode = args[0]
-		args = args[1:]
-	}
-	flags := flag.NewFlagSet("readyrig", flag.ContinueOnError)
-	workspace := flags.String("workspace", filepath.Join(home, "agent_workspace"), "Workspace exposed to file tools")
-	data := flags.String("data-dir", defaultDataDir(home), "Private logs, screenshots and application data directory (outside workspace)")
-	gateway := flags.String("gateway", "127.0.0.1:7332", "Agent API listener")
-	ui := flags.String("ui", "127.0.0.1:7331", "Local browser dashboard listener")
-	fullAccess := flags.Bool("full-access", false, "Allow file tools and command cwd outside approved projects using current OS user permissions")
-	share := flags.Bool("share", false, "Start an account-free Cloudflare Quick Tunnel for Agent API and read-only web console")
-	cloudflared := flags.String("cloudflared", "", "Override installed cloudflared executable")
-	cloudDefault := buildinfo.CloudURL
-	if v := environment("CLOUD_URL"); v != "" {
-		cloudDefault = v
-	}
-	cloudURL := flags.String("cloud-url", cloudDefault, "Cloud console URL used for Google sign-in and device control")
-	shell := flags.Bool("allow-shell", false, "Enable host shell execution (not sandboxed)")
-	computer := flags.Bool("allow-computer", false, "Enable native computer use")
-	allowIP := flags.String("allow-ip", "", "Comma-separated peer IP CIDRs for gateway")
-	noChrome := flags.Bool("no-chrome", false, "Disable automatic Chrome DevTools MCP bridge")
-	chromeURL := flags.String("chrome-browser-url", "", "Existing Chrome debugging HTTP URL on loopback (auto-detected by default)")
-	chromeProfile := flags.String("chrome-user-data-dir", "", "Chrome user data directory containing DevToolsActivePort")
-	chromeCommand := flags.String("chrome-mcp-command", "", "Installed chrome-devtools-mcp executable (defaults to installed command or npx)")
-	repoDefault := buildinfo.ReleaseRepo
-	if v := environment("UPDATE_REPO"); v != "" {
-		repoDefault = v
-	}
-	feedDefault := buildinfo.UpdateFeed
-	if v := environment("UPDATE_FEED"); v != "" {
-		feedDefault = v
-	}
-	updateRepo := flags.String("update-repo", repoDefault, "GitHub repository used for release updates (owner/repo)")
-	updateFeed := flags.String("update-feed", feedDefault, "Override release metadata URL (HTTPS or loopback)")
-	noUpdate := flags.Bool("no-update", environment("NO_UPDATE") == "1", "Disable release checks and automatic updates")
-	if err = flags.Parse(args); err != nil {
+	args, dataDir, err := extractDataDir(os.Args[1:], home)
+	if err != nil {
 		return err
 	}
-	if mode != "desktop" && mode != "web" && mode != "update" {
-		return fmt.Errorf("usage: readyrig [desktop|web|update|version] [--workspace path]")
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Println("ReadyRig", buildinfo.Version)
+		return nil
 	}
-	feed := *updateFeed
-	if feed == "" && *updateRepo != "" {
-		feed, err = update.GitHubFeed(*updateRepo)
+	mode := "desktop"
+	if !desktop.Available {
+		mode = "web"
+	}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		mode, args = args[0], args[1:]
+	}
+	if mode == "serve" {
+		mode = "web"
+	}
+	flags, opts, err := startupFlags(home, dataDir, mode != "desktop" && mode != "help" && mode != "version")
+	if err != nil {
+		return err
+	}
+	if handled, err := manageCLI(mode, args, flags, opts); handled {
+		return err
+	}
+	if err = flags.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if mode != "desktop" && mode != "web" && mode != "update" && mode != "init" {
+		return fmt.Errorf("unknown command %q; see 'readyrig help'", mode)
+	}
+	if err := validateOptions(opts); err != nil {
+		return err
+	}
+	if mode == "init" {
+		if opts.FullAccess {
+			return fmt.Errorf("Full Access is session-only; use 'serve --full-access'")
+		}
+		unlock, err := configurationLock(opts.DataDir)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		if err := os.MkdirAll(opts.Workspace, 0755); err != nil {
+			return err
+		}
+		if err := saveConfig(opts.DataDir, flags); err != nil {
+			return err
+		}
+		fmt.Println("Saved CLI configuration:", filepath.Join(opts.DataDir, configFile))
+		fmt.Println("Start ReadyRig with: readyrig serve --data-dir", opts.DataDir)
+		return nil
+	}
+	feed := opts.UpdateFeed
+	if feed == "" && opts.UpdateRepo != "" {
+		feed, err = update.GitHubFeed(opts.UpdateRepo)
 		if err != nil {
 			return err
 		}
 	}
-	updates := update.New(update.Options{Version: buildinfo.Version, Feed: feed, GUI: desktop.Available, Disabled: *noUpdate})
+	updates := update.New(update.Options{Version: buildinfo.Version, Feed: feed, GUI: desktop.Available, Disabled: opts.NoUpdate})
 	// Registered before App.Close and listener shutdown: install only after all
 	// tools, data files and ports have been released.
 	defer func() {
@@ -119,28 +135,28 @@ func run() (runErr error) {
 		}
 		return fmt.Errorf("update: %s", s.Reason)
 	}
-	a, err := app.New(*workspace, *data)
+	a, err := app.New(opts.Workspace, opts.DataDir)
 	if err != nil {
 		return err
 	}
 	closeApp := sync.OnceFunc(a.Close)
 	defer closeApp()
 	a.Server.Updates = updates
-	if *cloudflared != "" {
-		a.Server.Tunnel = tunnel.New(tunnel.Options{Dir: filepath.Join(a.Server.Store.Dir, "cloudflared"), Command: *cloudflared, Changed: a.Server.Registry.Signal, RedactSecrets: a.Server.Registry.AddSecrets})
+	if opts.Cloudflared != "" {
+		a.Server.Tunnel = tunnel.New(tunnel.Options{Dir: filepath.Join(a.Server.Store.Dir, "cloudflared"), Command: opts.Cloudflared, Changed: a.Server.Registry.Signal, RedactSecrets: a.Server.Registry.AddSecrets})
 	}
-	a.Server.Projects.SetFullAccess(*fullAccess)
-	if err = a.Chrome.Start(chromemcp.Options{Disabled: *noChrome, BrowserURL: *chromeURL, UserDataDir: *chromeProfile, Command: *chromeCommand}); err != nil {
+	a.Server.Projects.SetFullAccess(opts.FullAccess)
+	if err = a.Chrome.Start(chromemcp.Options{Disabled: opts.NoChrome, BrowserURL: opts.ChromeURL, UserDataDir: opts.ChromeProfile, Command: opts.ChromeCommand}); err != nil {
 		return err
 	}
-	if *shell {
+	if opts.Shell {
 		a.Server.Registry.Enable("terminal", true)
 	}
-	if *computer {
+	if opts.Computer {
 		a.Server.Registry.Enable("computer", true)
 	}
-	if *allowIP != "" {
-		for _, v := range strings.Split(*allowIP, ",") {
+	if opts.AllowIP != "" {
+		for _, v := range strings.Split(opts.AllowIP, ",") {
 			_, cidr, e := net.ParseCIDR(strings.TrimSpace(v))
 			if e != nil {
 				return e
@@ -148,19 +164,19 @@ func run() (runErr error) {
 			a.Server.AllowedIPs = append(a.Server.AllowedIPs, cidr)
 		}
 	}
-	gw, ln, err := server.Listen(*gateway, a.Server.Gateway())
+	gw, ln, err := server.Listen(opts.Gateway, a.Server.Gateway())
 	if err != nil {
 		return err
 	}
 	closeGateway := sync.OnceFunc(func() { server.Shutdown(gw) })
 	defer closeGateway()
 	a.Server.GatewayAddr = "http://" + ln.Addr().String()
-	if err = a.Server.StartCloud(*cloudURL); err != nil {
+	if err = a.Server.StartCloud(opts.CloudURL); err != nil {
 		return err
 	}
 	fmt.Println("ReadyRig Agent API:", a.Server.GatewayURL())
 	fmt.Println("Workspace:", a.Server.Workspace)
-	if *share {
+	if opts.Share {
 		if err = a.Server.StartSharing(); err != nil {
 			return err
 		}
@@ -183,26 +199,24 @@ func run() (runErr error) {
 			}
 		}()
 	}
+	closeControl, err := startLocalControl(a.Server)
+	if err != nil {
+		return err
+	}
+	defer closeControl()
 	if mode == "desktop" {
 		updates.Start()
 		return desktop.Run(a.Server.UI(), a.Server.Registry, updates, func() {
-			// AppKit terminates without returning from Run; ordinary Go defers do not
-			// run. Use Wails' shutdown hook for both service cleanup and installation.
+			// AppKit can terminate without running Go defers.
+			closeControl()
 			closeGateway()
 			closeApp()
 			if err := updates.Finish(true); err != nil {
 				log.Printf("update: %v", err)
 			}
-		}, filepath.Join(*data, "language.json"))
+		}, filepath.Join(opts.DataDir, "language.json"))
 	}
-	host, _, err := net.SplitHostPort(*ui)
-	if err != nil {
-		return err
-	}
-	if host != "127.0.0.1" && host != "::1" && host != "localhost" {
-		return fmt.Errorf("dashboard must listen on loopback")
-	}
-	web, uiln, err := server.Listen(*ui, a.Server.BrowserGuard(a.Server.UI()))
+	web, uiln, err := server.Listen(opts.UI, a.Server.BrowserGuard(a.Server.UI()))
 	if err != nil {
 		return err
 	}

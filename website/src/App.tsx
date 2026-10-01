@@ -6,6 +6,7 @@ import { AppPreview, ConnectionExample } from './components/AppPreview'
 import { UseCases } from './components/UseCases'
 import { CloudConnection, SharingSection } from './components/RemoteAccess'
 import { site } from './config'
+import { CopyButton } from './components/CopyButton'
 
 const featuresData: { number: string; icon: IconName; title: string; body: string; tags: string[] }[] = [
   {
@@ -139,6 +140,7 @@ function Download() {
   const { t } = useI18n()
   const [architecture, setArchitecture] = useState<'arm64' | 'amd64'>('arm64')
   const download = site.downloads[architecture]
+  const installCommand = `curl -fsSL ${site.cliInstallURL} | sh`
   return (
     <section className="download-section section-width" id="download" aria-labelledby="download-title">
       <div className="download-card">
@@ -163,6 +165,19 @@ function Download() {
             {download ? t('下载 macOS 版') : t('获取 macOS 安装包')}
           </a>
           <span className="download-meta">{t('macOS 12 及以上')}</span>
+        </div>
+      </div>
+      <div className="cli-install">
+        <div className="cli-install-intro">
+          <span className="eyebrow">CLI · Linux / macOS</span>
+          <h3>{t('在 VM 和服务器上使用 ReadyRig')}</h3>
+          <p>{t('安装 CLI，配置工具和项目目录，无需打开桌面窗口。')}</p>
+          <a href={site.cliDocs} target="_blank" rel="noopener noreferrer">{t('CLI 使用指南')} <Icon name="chevron" width="13" height="13" /></a>
+        </div>
+        <div className="cli-install-command">
+          <pre><code>{installCommand}</code></pre>
+          <CopyButton text={installCommand} label="复制安装命令" />
+          <span className="download-meta">{t('支持 Intel / AMD 和 ARM；安装后运行 readyrig help。')}</span>
         </div>
       </div>
       <div className="download-under">

@@ -373,9 +373,17 @@
   "查看 Prompt": "View prompt",
   "连接 Prompt": "Connection prompt",
   "找不到已授权的电脑": "Authorized computer not found",
+  "取消": "Cancel",
+  "名称": "Name",
+  "预览 Prompt": "Preview prompt",
   "复制云端 Prompt": "Copy cloud prompt",
   "云端连接 Prompt": "Cloud connection prompt",
   "正在生成…": "Generating…",
   "复制失败，请选中 Prompt 手动复制": "Copy failed. Select the prompt and copy it manually.",
-  "云端凭证已失效，请重新登录并复制云端 Prompt": "Cloud credential is no longer valid. Sign in and copy a new cloud prompt."
+  "云端凭证已失效，请重新登录并复制云端 Prompt": "Cloud credential is no longer valid. Sign in and copy a new cloud prompt.",
+  "在 VM 和服务器上使用 ReadyRig": "Use ReadyRig on VMs and servers",
+  "安装 CLI，配置工具和项目目录，无需打开桌面窗口。": "Install the CLI to configure tools and project folders without opening a desktop window.",
+  "CLI 使用指南": "CLI guide",
+  "复制安装命令": "Copy install command",
+  "支持 Intel / AMD 和 ARM；安装后运行 readyrig help。": "Supports Intel / AMD and ARM. Run readyrig help after installation."
 }

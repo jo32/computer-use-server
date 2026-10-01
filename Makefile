@@ -7,9 +7,11 @@ LDFLAGS = -X computer-use-server/internal/buildinfo.Version=$(VERSION) -X comput
 build:
 	MACOSX_DEPLOYMENT_TARGET=12.0 go build -ldflags '$(LDFLAGS)' -o bin/readyrig ./cmd/adapter
 cli:
-	go build -tags nogui -ldflags '$(LDFLAGS)' -o bin/readyrig-web ./cmd/adapter
+	go build -tags nogui -ldflags '$(LDFLAGS)' -o bin/readyrig ./cmd/adapter
+	cp bin/readyrig bin/readyrig-web
 test:
 	go test -race -tags nogui ./...
+	python3 scripts/test-install.py
 run:
 	go run ./cmd/adapter
 web:

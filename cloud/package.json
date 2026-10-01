@@ -11,6 +11,13 @@
     "db:local": "wrangler d1 migrations apply DB --local",
     "db:remote": "wrangler d1 migrations apply DB --remote"
   },
-  "dependencies": { "jose": "^6.1.0" },
-  "devDependencies": { "@cloudflare/workers-types": "^5.20260930.2", "@types/node": "^24.0.0", "typescript": "^5.9.3", "wrangler": "^4.145.0" }
+  "dependencies": {
+    "jose": "^6.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260930.2",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.145.0"
+  }
 }

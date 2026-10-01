@@ -20,6 +20,10 @@ type App struct {
 	Chrome    *chromemcp.Bridge
 }
 
+// LockData lets offline CLI configuration changes use the same instance lock as
+// the app. The caller must create the private directory before acquiring it.
+func LockData(dir string) (func(), error) { return lockData(dir) }
+
 func New(workspace, dataDir string) (*App, error) {
 	var err error
 	workspace, err = filepath.Abs(workspace)

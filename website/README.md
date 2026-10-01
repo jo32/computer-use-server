@@ -70,6 +70,7 @@ The product is named **ReadyRig**, and the package is `readyrig-website`. Theme 
 - `src/components/RemoteAccess.tsx`: cloud-to-local connection diagram, platform demo links, and sharing permission boundaries.
 - `src/components/AppPreview.tsx`: interactive preview and prompt, MCP, and REST examples.
 - `src/config.ts`: link and download configuration.
+- `public/install.sh`: checksum-verified curl installer for the ReadyRig CLI on macOS/Linux (amd64/arm64). The download section includes a copyable installation command and links to the CLI/VM guide. Override its URL with `VITE_CLI_INSTALL_URL` if needed. Deploy the website and publish CLI-capable release binaries before promoting the installation link; the installer rejects older binaries without the CLI commands.
 - `src/styles.css`: app colors, layout, responsive behavior, and light/dark appearance.
 - `index.html`: title, search/social metadata, icons, and initial appearance selection.
 

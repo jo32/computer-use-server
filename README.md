@@ -41,6 +41,96 @@ Default locations and addresses:
 
 The initial data directory must be outside the initial workspace. Adding a project that contains the data directory, or enabling Full Access, expands what file tools can access.
 
+## CLI and VMs
+
+ReadyRig has a desktop app and a CLI using the same backend, tools, permission checks, and local execution records. The CLI runs on macOS and Linux with amd64 or arm64 processors; it can configure and use an instance running on that machine. It also controls the desktop app when both builds include the CLI interface and use the same data directory. Linux supports file, terminal, and Chrome MCP tools; native desktop control remains macOS-only.
+
+Install without Go, Node.js, or administrator access:
+
+```sh
+curl -fsSL https://readyrig.getmegaportal.com/install.sh | sh
+```
+
+The installer places the CLI at `~/.local/bin/readyrig`. Add `~/.local/bin` to your shell's PATH if prompted. It detects the system and processor, pins the latest stable release, verifies the matching `SHA256SUMS`, and replaces the binary atomically. Failed downloads, checksum mismatches, or releases without the CLI commands leave an existing binary intact. Installation does not start a service or enable tools.
+
+To inspect the installer first or select a version and destination:
+
+```sh
+curl -fsSL https://readyrig.getmegaportal.com/install.sh -o /tmp/readyrig-install.sh
+less /tmp/readyrig-install.sh
+sh /tmp/readyrig-install.sh --version X.Y.Z --install-dir "$HOME/.local/bin"
+```
+
+`--repo owner/repo` selects another public GitHub release repository. The installer is also included as `install.sh` in new releases. For source builds, `make cli` creates `bin/readyrig` and its compatibility copy `bin/readyrig-web`.
+
+Configure a VM and start ReadyRig:
+
+```sh
+readyrig init --workspace ~/agent_workspace --allow-shell --no-chrome
+readyrig config show
+readyrig serve
+```
+
+`init` saves startup settings in private `cli.json` and creates the initial workspace. CLI builds also run the service when invoked without a command. `serve` and `web` read these settings; the desktop app keeps its existing launch defaults. Existing project catalogs are preserved: `--workspace` initializes the first project, and `projects add/use` manages later folders. Defaults are overridden by saved settings, then the supported `READYRIG_*` environment variables, then explicit launch flags. Both listeners use loopback by default. The dashboard remains available at the printed URL, so a headless VM can also use it through SSH port forwarding.
+
+Change saved startup settings while the instance is stopped:
+
+```sh
+readyrig config set allow-shell false
+readyrig config set no-chrome true
+readyrig config set gateway 127.0.0.1:7442
+```
+
+Use a second terminal while the app or service is running:
+
+```sh
+readyrig status
+readyrig connection
+readyrig tools
+readyrig projects list
+readyrig projects add /srv/my-project
+readyrig projects use <project-id>
+readyrig capability terminal on
+readyrig call --session vm-task help
+readyrig call --session vm-task exec_command '{"command":"pwd"}'
+readyrig call --session vm-task read_file '{"path":"README.md"}'
+readyrig pause
+readyrig resume
+```
+
+Results use JSON for scripting. `call <tool> -` reads JSON from stdin; `--session` before the tool name keeps process sessions and screenshot frames associated with the same task. Failed calls return a nonzero exit code and retain the service's JSON error result. Tool calls use the same audit log and capability/paused checks as REST and MCP. Runtime capability switches reset at restart; saved startup settings such as `allow-shell` apply again. Projects and their selection persist. Full Access remains session-only: use `serve --full-access` explicitly, and it cannot be saved by `init` or `config set`.
+
+Connections and account binding also work without a browser on the VM:
+
+```sh
+readyrig share start             # Temporary HTTPS connection; check status for readiness
+readyrig share status
+readyrig share stop
+readyrig cloud login --name my-vm
+readyrig cloud status
+```
+
+Open the `login_url` returned by `cloud login` on your own computer, sign in, compare the code, and confirm the binding while the VM service remains running. `cloud logout` unbinds it. To save a fixed tunnel, pass the Tunnel Token through stdin rather than the command line, then start `share start fixed`:
+
+```sh
+readyrig share configure --url https://your-domain.example --token-stdin < /private/tunnel-token
+readyrig share start fixed
+```
+
+For a Linux VM with a systemd user manager:
+
+```sh
+readyrig service install
+readyrig service start           # Enable and start the service
+readyrig service status
+readyrig service restart
+readyrig service stop
+```
+
+`install` writes `readyrig.service` in the user's systemd configuration directory and reloads the manager. `start` enables it for future user-manager starts. For startup at boot and continued operation after logout, an administrator can enable lingering with `sudo loginctl enable-linger "$USER"`. Minimal containers without systemd should run `readyrig serve` under their existing supervisor. `service print` shows the generated unit; `service uninstall` stops, disables, and removes the matching unit while retaining application data. Only one ReadyRig user unit is installed per user.
+
+Use global `--data-dir /private/path` before or after a command for another instance, including `init`, `serve`, configuration, and service installation. Run the control commands as the same OS user. The CLI connects through a Unix socket in a private temporary directory, with `0600` socket permissions. Private `control.json` stores only its path, without a dashboard key or other credential; both are removed on clean shutdown. Browser-origin requests are rejected on this interface. CLI management is never exposed through the public agent connection. The existing Windows web service continues to use its browser console for local management.
+
 ## Using the console
 
 - **Activity** shows live status, filters by session, category, and result, searches arguments and errors, and provides request/response details, pagination, and NDJSON export. Command output updates during execution without consuming unread `write_stdin` output. Individual calls can be cancelled while retaining their output.
@@ -49,19 +139,21 @@ The initial data directory must be outside the initial workspace. Adding a proje
 - **Connection** provides the current agent URL and MCP configuration, system permission status, capability switches, sharing, and software updates.
 - **Pause control** cancels active calls and terminal process groups and rejects new tool calls. Disabling one capability cancels only calls in that category.
 
-File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations must be enabled for each run locally, or explicitly through `--allow-shell` and `--allow-computer`. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
+File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations can be enabled locally for a run, explicitly through `--allow-shell` and `--allow-computer`, or through saved CLI startup settings for `serve`/`web`. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
 
 On macOS, left-click the menu bar computer icon to open the quick panel; clicking outside dismisses it. Right-click for the native menu to open the full window, pause or resume, check for updates, or quit. Closing the main window keeps the service running; quitting stops it. The icon animates during tool execution, indicates pause, and respects Reduce Motion.
 
 ## Projects and Full Access
 
-Add local folders on the **Projects** page. You can browse folders, rename projects, choose a default, and remove access. The project list and default are saved in `projects.json` in the data directory. `--workspace` supplies the initial folder only when this list is first created. Removing a project leaves its files and already running terminal commands intact.
+Add local folders on the **Projects** page. You can browse folders, rename projects, choose a default, and remove access. The folder's **⋯** menu includes **Open folder** to use the system file manager. On macOS, **Open with** lists compatible installed applications from the system's file associations, including their icons and the default application. Choose an app to open the folder without changing its default association. The project list and default are saved in `projects.json` in the data directory. `--workspace` supplies the initial folder only when this list is first created. Removing a project leaves its files and already running terminal commands intact.
+
+The desktop and local browser console share `POST /api/files/open`, accepting `project`, `path` and an optional `application` ID from `GET /api/files/applications?project=…&path=…`. These reusable endpoints support existing files and folders within the same project/Full Access boundaries as file tools. macOS uses NSWorkspace to list applications and open the selected path; builds without cgo query the same API through JXA and launch with `open`. Windows uses ShellExecute and Linux uses `xdg-open` for default opening, with application selection hidden where unavailable. These local console actions are excluded from REST/MCP agent tools and the public console.
 
 - Agents call `list_projects {}` to obtain project IDs, absolute paths, the default project, and `full_access` status. This query also works while paused.
 - `read_file`, `write_file`, `list_directory`, `search_files`, and `exec_command` accept an optional `project` ID. Relative paths use the default project unless another is specified. Absolute paths inside added projects are supported; when a project is explicitly selected, the path must belong to it.
 - **Full Access** permits file paths and terminal working directories outside added projects, subject to the current system account's permissions. It lasts only for the current run and is disabled after restart unless started with `--full-access`.
 - Full Access does not enable terminal, desktop, or Chrome capabilities, grant root privileges, or bypass macOS privacy permissions. The page links to Full Disk Access settings; restart after granting access to ReadyRig or the terminal app that launches it.
-- Only the local console can modify project access or Full Access. Agents can query them. Active file operations finish before access is revoked. Logs include the actual file path or command `cwd` to identify the project used.
+- The local console and CLI can manage project access. Full Access is set through the local console or explicit launch flag. Agents can query them. Active file operations finish before access is revoked. Logs include the actual file path or command `cwd` to identify the project used.
 
 ```json
 {"project":"<id-from-list_projects>","path":"README.md"}
@@ -309,7 +401,7 @@ Tests cover file traversal and symlink escape, file operations, validation, reda
 
 `python3 scripts/test-update.py` verifies a real binary update from 0.4.0 to 0.5.0 and restart in a temporary directory, retaining logs and workspace data.
 
-The [release workflow](.github/workflows/release.yml) tests and builds macOS Intel/Apple Silicon desktop packages and macOS/Linux/Windows browser binaries for both architectures, then publishes GitHub Releases when a `vX.Y.Z` tag is pushed. Missing Developer ID or notarization credentials stop the release; existing releases are not overwritten. Local `make release` runs the same signing and notarization steps without uploading. Mac app packages and `SHA256SUMS` are generated only after Apple accepts the submission and the bundles pass ticket validation and Gatekeeper assessment.
+The [release workflow](.github/workflows/release.yml) tests and builds macOS Intel/Apple Silicon desktop packages and macOS/Linux/Windows CLI/browser binaries for both architectures, then publishes GitHub Releases when a `vX.Y.Z` tag is pushed. The curl installer consumes the existing `readyrig-web-*` binaries and ships alongside them as `install.sh`. The website serves the canonical installer from `website/public/install.sh`; publish a release containing the CLI commands and deploy the website to make the one-line installation available. Missing Developer ID or notarization credentials stop the release; existing releases are not overwritten. Local `make release` runs the same signing and notarization steps without uploading. Mac app packages and `SHA256SUMS` are generated only after Apple accepts the submission and the bundles pass ticket validation and Gatekeeper assessment.
 
 For local releases, set `SIGN_IDENTITY` to a Developer ID Application name or fingerprint and optionally set `SIGN_KEYCHAIN`. Authenticate notarization with an existing `NOTARY_PROFILE` (and optionally `NOTARY_KEYCHAIN`), or use a team API key through `NOTARY_KEY_PATH`, `NOTARY_KEY_ID`, and `NOTARY_ISSUER_ID`. To build first and notarize later, run `VERSION=0.6.1 sh scripts/release.sh --prepare`, then run `sh scripts/release.sh --finish` with the same version and notarization credentials. Development `make app` builds can still use ad-hoc signing.
 
@@ -327,6 +419,7 @@ Release scripts produce primary `readyrig-*` packages and compatibility `readrig
 
 ## Design references and attribution
 
+- [Telegram for macOS](https://github.com/overtake/TelegramSwift/blob/579cebbf0c01fd41b712eff3647fa7f69db9665d/packages/ObjcUtils/Sources/ObjcUtils/ObjcUtils.m#L475): the Open With design queries Launch Services for matching applications and shows their names and icons. ReadyRig independently implements this with current NSWorkspace APIs. The source reference was cloned with one commit and no submodules; the upstream menu call is commented out in that revision.
 - [Codex](https://github.com/openai/codex): tool specifications, registry/executor separation, dispatch lifecycle, and progressive `exec_command` / `write_stdin` output. Reference commit: `94d642d8b40e45e2e544770f0d1f28df9a717f06` from a shallow, sparse checkout of main.
 - [Magpie](https://github.com/yetone/magpie): Go, Wails v3, embedded HTML/CSS/JS, shared desktop/web HTTP handlers, compact information density, and call tracing. Reference commit: `74834748b98daeb295bf78b38170967e426e0c59`.
 - [Product research](docs/product-research.md): Cua Driver, Peekaboo, Munim, Gokin Studio, Go MCP servers, and Bytebot, including reusable capabilities and unverified claims.

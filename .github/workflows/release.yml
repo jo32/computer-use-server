@@ -32,7 +32,7 @@ jobs:
           node --check internal/server/assets/app.js
           node --test scripts/test-i18n.cjs
           bash -n scripts/sign-macos.sh scripts/notarize-macos.sh
-          sh -n scripts/package-macos.sh scripts/release.sh
+          sh -n scripts/package-macos.sh scripts/release.sh website/public/install.sh
       - name: Check for an existing release
         id: existing
         env:

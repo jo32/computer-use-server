@@ -318,6 +318,14 @@ h2 { font-size: clamp(29px, 3.5vw, 38px); line-height: 1.5; font-weight: 580; le
 .download-under { display: flex; justify-content: space-between; gap: 18px; font-size: 11px; line-height: 1.9; color: var(--muted); padding: 16px 5px 0; }
 .download-under a { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; }
 .download-under a:hover { color: var(--fg); }
+.cli-install { display: grid; grid-template-columns: 1fr 1.2fr; gap: 24px; padding: 24px 32px; margin-top: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+.cli-install h3 { margin: 7px 0 9px; font-size: 18px; }
+.cli-install p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.cli-install-intro a { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; }
+.cli-install-command { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.cli-install-command pre { width: 100%; min-width: 0; margin: 0; padding: 15px; border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.7; }
+.cli-install-command .download-meta { flex: 1; font-size: 10px; line-height: 1.6; }
+@media (max-width: 760px) { .cli-install { grid-template-columns: 1fr; padding: 24px; } }
 .site-footer { margin-top: 70px; padding-block: 28px 34px; display: flex; align-items: center; gap: 24px; border-top: 1px solid var(--line); }
 .site-footer > div { display: flex; align-items: center; gap: 24px; flex: 1; }
 .site-footer .wordmark { font-size: 16px; }

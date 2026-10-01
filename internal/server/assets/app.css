@@ -49,6 +49,15 @@
 #disk-access p{margin:9px 0 12px}.project-tools-link{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 4px;color:var(--muted);font-size:11px}.project-tools-link .text{font-size:11px;white-space:nowrap}
 .project-menu{position:fixed;z-index:25;min-width:148px;padding:4px;border:1px solid var(--line);border-radius:9px;background:var(--pop-bg);box-shadow:var(--shadow);backdrop-filter:blur(16px)}
 .project-menu button{display:block;width:100%;text-align:left;padding:7px 10px;font-size:12px;border-radius:5px}.project-menu button:hover,.project-menu button:focus-visible{background:var(--pill);outline-offset:-2px}
+.project-menu-separator{height:1px;margin:4px 6px;background:var(--line)}
+#project-menu-open-with:not(.hidden){display:flex;align-items:center;justify-content:space-between;gap:24px}
+.project-app-menu{z-index:26;min-width:210px;max-width:320px;overflow:hidden}
+.project-app-list{max-height:min(310px,calc(100vh - 26px));overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 var(--fade-top,0px),#000 calc(100% - var(--fade-bottom,0px)),transparent);mask-image:linear-gradient(to bottom,transparent,#000 var(--fade-top,0px),#000 calc(100% - var(--fade-bottom,0px)),transparent)}
+.project-app-menu button{display:flex;align-items:center;gap:8px}
+.project-app-icon{flex:none;width:20px;height:20px;object-fit:contain}
+.project-app-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-app-default{color:var(--muted);font-size:10px}
+.project-app-message{padding:7px 10px;font-size:12px;color:var(--muted)}
 .project-dialog{width:min(540px,calc(100vw - 40px))}.project-dialog .dialog-heading h2{font-family:var(--font);font-size:16px}.project-dialog label{display:block;font-size:11px;color:var(--muted);margin:16px 0 6px}
 .project-input{width:100%;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:8px 10px;font-size:12px}.directory-address{display:flex;gap:8px;align-items:center}.directory-address .project-input{flex:1;min-width:0;font-family:var(--code);font-size:11px}
 .directory-browser{border:1px solid var(--line);border-radius:8px;margin-top:12px;overflow:hidden}.directory-toolbar{display:flex;align-items:center;gap:6px;padding:8px;background:var(--card-2);border-bottom:1px solid var(--line-2)}#directory-list{max-height:220px;overflow:auto}

@@ -300,26 +300,82 @@ function renderProjects(){
  $('access-description').textContent=PUBLIC_VIEW?(access.full_access?t("目前可以访问项目之外的目录，权限在本机管理。"):t("目前仅能使用已添加的项目目录，权限在本机管理。")):access.full_access?t("可以访问项目之外的目录，重启后恢复限制。"):t("开启后，可访问当前账户可读写的其他目录。");
  $('disk-access').classList.toggle('hidden',!['darwin','macOS'].includes(state.data.permissions.platform));
 }
-let projectMenuID='',projectMenuAnchor=null;
+let projectMenuID='',projectMenuAnchor=null,projectAppVersion=0,projectAppID='',projectAppFocus=false;
+function closeProjectAppMenu(){
+ projectAppVersion++;projectAppID='';projectAppFocus=false;$('project-app-menu').classList.add('hidden');$('project-menu-open-with').setAttribute('aria-expanded','false');
+}
 function closeProjectMenu(){
+ closeProjectAppMenu();
  $('project-menu').classList.add('hidden');projectMenuAnchor?.setAttribute('aria-expanded','false');projectMenuID='';projectMenuAnchor=null;
 }
 function openProjectMenu(button){
+ if(PUBLIC_VIEW)return;
  const id=button.dataset.projectMore;if(projectMenuID===id){closeProjectMenu();return}
  closeProjectMenu();projectMenuID=id;projectMenuAnchor=button;
  const menu=$('project-menu');menu.classList.remove('hidden');button.setAttribute('aria-expanded','true');
  $('project-menu-remove').disabled=state.data.project_access.projects.length===1;
+ $('project-menu-open').disabled=openingLocalPath;
+ $('project-menu-open-with').disabled=openingLocalPath;
+ $('project-menu-open-with').classList.toggle('hidden',!state.data.local_open?.applications);
  const rect=button.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(rect.right-menu.offsetWidth,innerWidth-menu.offsetWidth-8))+'px';
  menu.style.top=(rect.bottom+menu.offsetHeight+8>innerHeight?Math.max(8,rect.top-menu.offsetHeight-4):rect.bottom+4)+'px';
- $('project-menu-rename').focus();
+ (openingLocalPath?$('project-menu-rename'):$('project-menu-open')).focus();
 }
+let openingLocalPath=false;
+async function openLocalPath(project,path,application=''){
+ if(PUBLIC_VIEW||openingLocalPath)return;
+ openingLocalPath=true;
+ try{const result=await api('/api/files/open',{project,path,application});if(result.opened)toast(t("已交给系统打开"))}catch(e){toast(e.message)}finally{openingLocalPath=false}
+}
+function openProjectFolder(application=''){
+ const id=projectMenuID;closeProjectMenu();
+ if(id)void openLocalPath(id,'.',application);
+}
+$('project-menu-open').onclick=()=>openProjectFolder();
+function positionProjectAppMenu(){
+ const menu=$('project-app-menu'),parent=$('project-menu').getBoundingClientRect(),anchor=$('project-menu-open-with').getBoundingClientRect();
+ const left=parent.right+menu.offsetWidth+4<=innerWidth?parent.right+4:parent.left-menu.offsetWidth-4;
+ menu.style.left=Math.max(8,Math.min(left,innerWidth-menu.offsetWidth-8))+'px';
+ menu.style.top=Math.max(8,Math.min(anchor.top,innerHeight-menu.offsetHeight-8))+'px';
+}
+function updateProjectAppFade(){
+ const list=$('project-app-list'),remaining=list.scrollHeight-list.clientHeight-list.scrollTop;
+ list.style.setProperty('--fade-top',Math.min(16,Math.max(0,list.scrollTop))+'px');
+ list.style.setProperty('--fade-bottom',Math.min(16,Math.max(0,remaining))+'px');
+}
+$('project-app-list').addEventListener('scroll',updateProjectAppFade,{passive:true});
+async function openProjectApplications(focus=true){
+ if(!projectMenuID||openingLocalPath||PUBLIC_VIEW||!state.data.local_open?.applications)return;
+ const menu=$('project-app-menu'),list=$('project-app-list');
+ if(projectAppID===projectMenuID){projectAppFocus ||= focus;if(focus)menu.querySelector('button')?.focus();return}
+ const id=projectMenuID,version=++projectAppVersion;projectAppID=id;projectAppFocus=focus;
+ list.innerHTML=`<div class="project-app-message" role="status">${t("正在读取打开方式…")}</div>`;list.scrollTop=0;menu.classList.remove('hidden');
+ $('project-menu-open-with').setAttribute('aria-expanded','true');positionProjectAppMenu();updateProjectAppFade();
+ try{
+  const result=await api('/api/files/applications?'+new URLSearchParams({project:id,path:'.'}));
+  if(version!==projectAppVersion||id!==projectMenuID)return;
+  list.innerHTML=result.applications.map(app=>`<button role="menuitem" data-open-application="${esc(app.id)}" title="${esc(app.name)}">${app.icon?`<img class="project-app-icon" src="${esc(app.icon)}" alt="">`:'<span class="project-app-icon" aria-hidden="true"></span>'}<span class="project-app-name">${esc(app.name)}</span>${app.default?`<span class="project-app-default">${t("默认")}</span>`:''}</button>`).join('')||`<div class="project-app-message" role="status">${t("没有可用的打开方式")}</div>`;
+ }catch(e){if(version!==projectAppVersion||id!==projectMenuID)return;list.innerHTML=`<div class="project-app-message" role="status">${esc(e.message)}</div>`}
+ positionProjectAppMenu();if(projectAppFocus)menu.querySelector('button')?.focus();updateProjectAppFade();
+}
+$('project-menu-open-with').onclick=()=>void openProjectApplications();
+$('project-menu-open-with').onmouseenter=()=>void openProjectApplications(false);
+for(const button of $('project-menu').querySelectorAll('button:not(#project-menu-open-with)'))button.onmouseenter=closeProjectAppMenu;
+$('project-app-menu').onclick=e=>{const button=e.target.closest('[data-open-application]');if(button)openProjectFolder(button.dataset.openApplication)};
 $('project-menu-rename').onclick=()=>{const p=state.data.project_access.projects.find(p=>p.id===projectMenuID);closeProjectMenu();if(p)openProject(p)};
 $('project-menu-remove').onclick=async()=>{
  const id=projectMenuID;closeProjectMenu();
  try{await api('/api/projects',{action:'remove',id});await refresh();toast(t("已移除目录授权，文件保留"))}catch(e){toast(e.message)}
 };
-document.addEventListener('click',e=>{if(e.target.closest('[data-project-more]'))openProjectMenu(e.target.closest('[data-project-more]'));else if(!e.target.closest('#project-menu'))closeProjectMenu()});
-document.addEventListener('keydown',e=>{if(projectMenuID&&e.key==='Escape'){const anchor=projectMenuAnchor;closeProjectMenu();anchor?.focus()}if(projectMenuID&&['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const buttons=[...$('project-menu').querySelectorAll('button:not(:disabled)')];const i=buttons.indexOf(document.activeElement);buttons[(i+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length].focus()}});
+document.addEventListener('click',e=>{if(e.target.closest('[data-project-more]'))openProjectMenu(e.target.closest('[data-project-more]'));else if(!e.target.closest('#project-menu,#project-app-menu'))closeProjectMenu()});
+document.addEventListener('keydown',e=>{
+ if(!projectMenuID)return;
+ const inApps=!!document.activeElement?.closest('#project-app-menu');
+ if(e.key==='Escape'){e.preventDefault();if(!$('project-app-menu').classList.contains('hidden')){closeProjectAppMenu();$('project-menu-open-with').focus()}else{const anchor=projectMenuAnchor;closeProjectMenu();anchor?.focus()}}
+ if(e.key==='ArrowRight'&&document.activeElement===$('project-menu-open-with')){e.preventDefault();void openProjectApplications()}
+ if(e.key==='ArrowLeft'&&inApps){e.preventDefault();closeProjectAppMenu();$('project-menu-open-with').focus()}
+ if(['ArrowUp','ArrowDown','Home','End'].includes(e.key)){e.preventDefault();if(!inApps)closeProjectAppMenu();const buttons=[...(inApps?$('project-app-menu'):$('project-menu')).querySelectorAll('button:not(:disabled):not(.hidden)')];const i=buttons.indexOf(document.activeElement);const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length;buttons[next]?.focus()}
+});
 document.querySelector('.view').addEventListener('scroll',closeProjectMenu,{passive:true});window.addEventListener('resize',closeProjectMenu);
 let directoryParent='',directoryVersion=0,editingProject='';
 async function browseDirectory(path){

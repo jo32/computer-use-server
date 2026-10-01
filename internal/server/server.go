@@ -6,6 +6,7 @@ import (
 	"computer-use-server/internal/cloud"
 	"computer-use-server/internal/computer"
 	"computer-use-server/internal/harness"
+	"computer-use-server/internal/localopen"
 	"computer-use-server/internal/store"
 	"computer-use-server/internal/tunnel"
 	"computer-use-server/internal/update"
@@ -49,6 +50,7 @@ type Server struct {
 	rateStart                                 time.Time
 	rateCount                                 int
 	sessions                                  map[string]mcpSession
+	openLocalPath                             localPathOpener
 }
 type mcpSession struct {
 	Client string
@@ -111,6 +113,7 @@ func (s *Server) UI() http.Handler {
 	mux := http.NewServeMux()
 	s.updateRoutes(mux)
 	s.projectRoutes(mux)
+	s.localOpenRoutes(mux)
 	s.tunnelRoutes(mux)
 	s.cloudRoutes(mux)
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +140,7 @@ func (s *Server) UI() http.Handler {
 			updates = s.updateStatus()
 			cloudState = s.cloudStatus()
 		}
-		write(w, map[string]any{"public": remote, "paused": paused, "enabled": enabled, "summary": summary, "sessions": sessions, "tools": s.Registry.Specs(), "permissions": s.Computer.Permissions(), "workspace": s.activeWorkspace(), "project_access": s.projectState(), "gateway": gateway, "gateway_origin": origin, "version": buildinfo.Version, "chrome": chrome, "update": updates, "cloud": cloudState, "tunnel": s.tunnelStatus(remote)})
+		write(w, map[string]any{"public": remote, "paused": paused, "enabled": enabled, "summary": summary, "sessions": sessions, "tools": s.Registry.Specs(), "permissions": s.Computer.Permissions(), "workspace": s.activeWorkspace(), "project_access": s.projectState(), "local_open": localopen.Supported(), "gateway": gateway, "gateway_origin": origin, "version": buildinfo.Version, "chrome": chrome, "update": updates, "cloud": cloudState, "tunnel": s.tunnelStatus(remote)})
 	})
 	mux.HandleFunc("POST /api/chrome/refresh", func(w http.ResponseWriter, r *http.Request) {
 		if s.Chrome != nil {

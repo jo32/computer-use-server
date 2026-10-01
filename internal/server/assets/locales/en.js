@@ -1,5 +1,17 @@
 'use strict';
 const readyRigEnglish = {
+  "打开文件夹": "Open folder",
+  "打开方式": "Open with",
+  "正在读取打开方式…": "Loading applications…",
+  "没有可用的打开方式": "No applications available",
+  "已交给系统打开": "Opened with the system application",
+  "此系统不支持列出打开方式": "This system cannot list available applications",
+  "应用不可用，请重新选择打开方式": "Application unavailable. Select an application again.",
+  "无法读取系统打开方式": "Cannot read available system applications",
+  "无法读取系统打开方式：%w": "Cannot read available system applications: %w",
+  "打开路径必须为绝对路径": "The path to open must be absolute",
+  "仅支持打开文件或文件夹": "Only files and folders can be opened",
+  "无法打开文件或文件夹：%w": "Cannot open the file or folder: %w",
   "成功": "Success",
   "失败": "Failed",
   "已拦截": "Blocked",

@@ -75,6 +75,7 @@ if [ "$(uname -s)" = Darwin ]; then
   done
 fi
 cp internal/update/MAGPIE-LICENSE.txt "$out/MAGPIE-LICENSE.txt"
+cp website/public/install.sh "$out/install.sh"
 python3 - "$out" <<'PY'
 import hashlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
