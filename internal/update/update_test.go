@@ -39,6 +39,35 @@ func TestVersions(t *testing.T) {
 	}
 }
 
+func TestBundledCLIUpdatesOnlyWithApp(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS bundled CLI")
+	}
+	app := filepath.Join(t.TempDir(), "ReadyRig.app")
+	helper := filepath.Join(app, "Contents", "Helpers", "readyrig")
+	if err := os.MkdirAll(filepath.Dir(helper), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, []byte("signed CLI fixture"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	u := newAt(Options{Version: "1.0.0", Feed: "https://example.com/update.json"}, helper)
+	defer u.Finish(false)
+	if status := u.Status(); status.State != "managed" || status.CanCheck || status.CanRestart {
+		t.Fatal("bundled CLI could change its signed app", status)
+	}
+	u.Check()
+	if err := u.Finish(true); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(helper); err != nil || string(body) != "signed CLI fixture" {
+		t.Fatal("bundled helper was modified", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(helper), ".readyrig.update.lock")); !os.IsNotExist(err) {
+		t.Fatal("bundled helper took its own update lock")
+	}
+}
+
 func digest(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
 func testTarget(t *testing.T) string {
 	t.Helper()

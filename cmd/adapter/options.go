@@ -19,6 +19,7 @@ type startupOptions struct {
 	Workspace, DataDir, Gateway, UI, Cloudflared, CloudURL, AllowIP string
 	ChromeURL, ChromeProfile, ChromeCommand, UpdateRepo, UpdateFeed string
 	FullAccess, Share, Shell, Computer, NoChrome, NoUpdate          bool
+	Foreground                                                      bool
 }
 
 const configFile = "cli.json"
@@ -45,6 +46,7 @@ func startupFlags(home, dataDir string, saved bool) (*flag.FlagSet, *startupOpti
 	f.StringVar(&o.UpdateRepo, "update-repo", buildinfo.ReleaseRepo, "GitHub release repository (owner/repo)")
 	f.StringVar(&o.UpdateFeed, "update-feed", buildinfo.UpdateFeed, "Override release metadata URL")
 	f.BoolVar(&o.NoUpdate, "no-update", false, "Disable release checks and automatic updates")
+	f.BoolVar(&o.Foreground, "foreground", false, "Run serve/web in the foreground (for supervisors and debugging)")
 	if saved {
 		values, err := readConfig(dataDir)
 		if err != nil {
@@ -88,7 +90,9 @@ func startupFlags(home, dataDir string, saved bool) (*flag.FlagSet, *startupOpti
 	return f, o, nil
 }
 
-func persistentFlag(name string) bool { return name != "data-dir" && name != "full-access" }
+func persistentFlag(name string) bool {
+	return name != "data-dir" && name != "full-access" && name != "foreground" && name != "if-needed"
+}
 
 func readConfig(dir string) (map[string]json.RawMessage, error) {
 	b, err := os.ReadFile(filepath.Join(dir, configFile))

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"computer-use-server/internal/cliinstall"
 	"computer-use-server/internal/computer"
 	"computer-use-server/internal/harness"
 	"computer-use-server/internal/store"
@@ -39,6 +40,24 @@ func request(h http.Handler, method, path, body, accessPath string) *httptest.Re
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
+}
+
+func TestCLIInstallationStatusIsLocalOnly(t *testing.T) {
+	s := fixture(t)
+	s.CLI = &cliinstall.Status{State: "installed", Path: "/Users/private/.local/bin/readyrig"}
+	s.LocalCLI = &LocalCLI{Command: "/Applications/ReadyRig.app/Contents/Helpers/readyrig", DataDir: "/Users/private/custom-data", Mode: "desktop"}
+	local := request(s.UI(), "GET", "/api/state", "", "")
+	if local.Code != 200 || !strings.Contains(local.Body.String(), s.CLI.Path) || !strings.Contains(local.Body.String(), s.LocalCLI.DataDir) || !strings.Contains(local.Body.String(), s.LocalCLI.Command) {
+		t.Fatal("local installation status missing", local.Code, local.Body.String())
+	}
+	public := request(s.Gateway(), "GET", "/app/api/state", "", s.AccessPath)
+	if public.Code != 200 || strings.Contains(public.Body.String(), s.CLI.Path) || strings.Contains(public.Body.String(), s.LocalCLI.Command) || strings.Contains(public.Body.String(), s.LocalCLI.DataDir) {
+		t.Fatal("CLI installation status exposed publicly", public.Code, public.Body.String())
+	}
+	var publicState map[string]any
+	if err := json.Unmarshal(public.Body.Bytes(), &publicState); err != nil || publicState["local_cli"] != nil {
+		t.Fatal("public console received local CLI context", err, publicState)
+	}
 }
 func TestGatewayAuthAndBoundaries(t *testing.T) {
 	s := fixture(t)

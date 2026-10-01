@@ -109,7 +109,7 @@ func TestCLIServiceAndToolsEndToEnd(t *testing.T) {
 		}
 		return cmd, stop
 	}
-	_, stop := start() // CLI builds default to serving, with saved settings.
+	_, stop := start("serve", "--foreground")
 	info, err := os.Stat(filepath.Join(data, "control.json"))
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatal("control metadata is not private", err)
@@ -144,14 +144,22 @@ func TestCLIServiceAndToolsEndToEnd(t *testing.T) {
 		t.Fatal("browser origin accepted on the CLI socket")
 	}
 	var state struct {
-		Enabled map[string]bool `json:"enabled"`
-		Paused  bool            `json:"paused"`
+		Enabled  map[string]bool `json:"enabled"`
+		Paused   bool            `json:"paused"`
+		LocalCLI struct {
+			Command string `json:"command"`
+			DataDir string `json:"data_dir"`
+			Mode    string `json:"mode"`
+		} `json:"local_cli"`
 	}
 	if err := json.Unmarshal(cli(true, "status"), &state); err != nil {
 		t.Fatal(err)
 	}
 	if !state.Enabled["terminal"] || state.Enabled["browser"] {
 		t.Fatal("startup settings ignored", state.Enabled)
+	}
+	if state.LocalCLI.Command != executable || state.LocalCLI.DataDir != data || state.LocalCLI.Mode != "foreground" {
+		t.Fatal("configuration prompt would address the wrong instance", state.LocalCLI)
 	}
 	cli(false, "config", "set", "allow-shell", "false") // Cannot race the running app.
 	cli(true, "tools")
@@ -188,7 +196,7 @@ func TestCLIServiceAndToolsEndToEnd(t *testing.T) {
 	}
 	cli(false, "status")
 	cli(true, "config", "set", "allow-shell", "false")
-	_, stop = start("serve", "--allow-shell", "--full-access") // Explicit launch override, never saved.
+	_, stop = start("serve", "--foreground", "--allow-shell", "--full-access") // Explicit launch override, never saved.
 	if err := json.Unmarshal(cli(true, "status"), &state); err != nil || !state.Enabled["terminal"] {
 		t.Fatal("launch override ignored", err)
 	}
@@ -202,7 +210,7 @@ func TestCLIServiceAndToolsEndToEnd(t *testing.T) {
 		t.Fatal("project persistence or access override failed", err)
 	}
 	stop()
-	_, stop = start("web")
+	_, stop = start("web", "--foreground")
 	if err := json.Unmarshal(cli(true, "projects", "list"), &projects); err != nil || projects.FullAccess {
 		t.Fatal("Full Access survived a restart", err)
 	}
@@ -210,6 +218,48 @@ func TestCLIServiceAndToolsEndToEnd(t *testing.T) {
 		t.Fatal("saved shell setting ignored", err)
 	}
 	stop()
+}
+
+func TestDesktopReadsSavedStartupSettings(t *testing.T) {
+	home := t.TempDir()
+	data := filepath.Join(home, "private")
+	if err := os.Mkdir(data, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid persisted settings must be detected before opening a window or
+	// starting tools. This also works with nogui process tests.
+	if err := writePrivateJSON(filepath.Join(data, configFile), map[string]any{"workspace": home}); err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Args
+	t.Cleanup(func() { os.Args = previous })
+	os.Args = []string{"readyrig", "desktop", "--data-dir", data}
+	t.Setenv("HOME", home)
+	if err := run(); err == nil || !strings.Contains(err.Error(), "data directory must be outside workspace") {
+		t.Fatal("desktop ignored the CLI startup configuration", err)
+	}
+}
+
+func TestLocalCLIContextUsesMatchingAppHelper(t *testing.T) {
+	bundle := filepath.Join(t.TempDir(), "ReadyRig.app", "Contents")
+	executable := filepath.Join(bundle, "MacOS", "readyrig")
+	helper := filepath.Join(bundle, "Helpers", "readyrig")
+	if err := os.MkdirAll(filepath.Dir(helper), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	context := localCLIContext(executable, "/custom/data", "desktop")
+	if context.Command != helper || context.DataDir != "/custom/data" || context.Mode != "desktop" {
+		t.Fatal("configuration prompt lost the matching bundled CLI", context)
+	}
+	if err := os.Chmod(helper, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if context := localCLIContext(executable, "/custom/data", "desktop"); context.Command != executable {
+		t.Fatal("prompt references a non-executable helper", context)
+	}
 }
 
 func TestControlClientStaysOnPrivateSocket(t *testing.T) {
@@ -298,7 +348,7 @@ func TestServiceUnitEscapesPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(unit, `ExecStart=:"/home/user/a \"$quote\"/readyrig" serve --data-dir "/home/user/100%%/$data"`) {
+	if !strings.Contains(unit, `ExecStart=:"/home/user/a \"$quote\"/readyrig" serve --foreground --data-dir "/home/user/100%%/$data"`) {
 		t.Fatal(unit)
 	}
 	if _, err := serviceUnit("/tmp/readyrig\nInjected=true", "/tmp/data"); err == nil {

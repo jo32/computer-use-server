@@ -12,11 +12,13 @@ cli:
 test:
 	go test -race -tags nogui ./...
 	python3 scripts/test-install.py
+	python3 scripts/test-tui.py
 run:
 	go run ./cmd/adapter
 web:
 	go run -tags nogui ./cmd/adapter web
 app: build
-	VERSION='$(VERSION)' sh scripts/package-macos.sh
+	MACOSX_DEPLOYMENT_TARGET=12.0 go build -tags nogui -ldflags '$(LDFLAGS)' -o bin/readyrig-cli ./cmd/adapter
+	VERSION='$(VERSION)' PACKAGE_CLI_BINARY=bin/readyrig-cli sh scripts/package-macos.sh
 release:
 	VERSION='$(VERSION)' RELEASE_REPO='$(RELEASE_REPO)' sh scripts/release.sh

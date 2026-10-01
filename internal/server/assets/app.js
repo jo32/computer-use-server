@@ -94,7 +94,49 @@ function showPage(page){
  if(page==='replay')loadFrames().catch(e=>error(e.message));
 }
 function renderTools(){renderChrome();$('tools').innerHTML=state.data.tools.map(tool=>`<button class="row tool-row" data-tool="${esc(tool.name)}"><span class="tool-icon" aria-hidden="true">${toolIcons[tool.name]||icons[tool.category]||icons.system}</span><span class="who"><span class="name">${esc(tool.name)}</span><span class="sub">${esc(t(descriptions[tool.name]||tool.description))}</span></span><span class="tags"><span class="tag">${tool.mutating?t("读写"):t("只读")}</span><span class="tag">${tool.parallel?t("并发"):t("串行")}</span><span class="tag">${!state.data.enabled[tool.category]?t("未启用"):tool.category==='browser'&&state.data.chrome?.state!=='ready'?t("待连接"):t("已启用")}</span></span><span class="chev">›</span></button>`).join('')}
-function renderSettings(){renderChrome();const d=state.data;const names={files:[t("文件系统"),t("读取、写入和搜索已添加项目中的文件；目录范围在「项目」中管理。")],terminal:[t("终端执行"),t("允许执行宿主机命令。工作目录限制不是系统沙箱；命令拥有当前用户的权限。")],computer:[t("桌面操作"),t("允许截图、鼠标与键盘操作。此驱动使用真实鼠标，移动到屏幕角落可停止输入。")],browser:[t("Chrome 浏览器"),t("检测已开启的 Chrome 远程调试，通过官方 MCP 开放浏览器工具。所有调用均记录日志。")]};if(!$('capabilities').children.length||$('capabilities').dataset.locale!==readyRigI18n.locale){$('capabilities').dataset.locale=readyRigI18n.locale;$('capabilities').innerHTML=Object.entries(names).map(([k,[title,description]])=>`<div class="capability"><span class="tool-icon ${k}" aria-hidden="true">${icons[k]}</span><div class="capability-copy"><strong id="capability-${k}-label">${title}</strong><p id="capability-${k}-description">${description}</p></div><div class="capability-control"><span class="switch-state" data-capability-state="${k}" aria-hidden="true"></span><button class="toggle" role="switch" aria-checked="false" aria-labelledby="capability-${k}-label" aria-describedby="capability-${k}-description" data-capability="${k}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></button></div></div>`).join('')}
+function renderCLI(){
+ const c=state.data?.cli,local=state.data?.local_cli;
+ $('cli-panel').classList.toggle('hidden',PUBLIC_VIEW||(!c&&!local));
+ $('cli-installation').classList.toggle('hidden',!c);$('cli-status').classList.toggle('hidden',!c);
+ const prompt=localConfigurationPrompt(local);
+ $('local-config-prompt').classList.toggle('hidden',!prompt);
+ if($('local-config-prompt-text').value!==prompt)$('local-config-prompt-text').value=prompt;
+ $('copy-local-config-prompt').disabled=!prompt||$('copy-local-config-prompt').getAttribute('aria-busy')==='true';
+ if(!c)return;
+ const labels={installed:t('已安装 CLI'),existing:t('已保留现有 CLI'),relocate:t('需要移动 App'),error:t('CLI 安装未完成')};
+ $('cli-status').textContent=labels[c.state]||c.state;$('cli-path').textContent=c.path||'';
+ $('cli-message').textContent=c.state==='relocate'?t('请先将 ReadyRig 移到应用程序文件夹并重新打开。'):c.state==='existing'?t('已有独立安装的 CLI，App 会保留它。新开终端后运行 readyrig。'):c.state==='error'?t('修复下方问题后重新打开 App，即可重试安装 CLI。'):t('新开一个终端窗口，运行 readyrig 即可打开终端界面。');
+ $('cli-error').textContent=t(c.error||'');$('cli-error').classList.toggle('hidden',!c.error);
+}
+function shellArgument(value){return "'"+String(value).replaceAll("'","'\\''")+"'"}
+function localConfigurationPrompt(context){
+ if(PUBLIC_VIEW||!context?.command||!context?.data_dir)return '';
+ const prefix=shellArgument(context.command)+' --data-dir '+shellArgument(context.data_dir);
+ const commands=['version','help','status','config show','projects list','tools'].map(command=>'    '+prefix+' '+command).join('\n');
+ const lifecycle=context.mode==='desktop'?t("当前实例由 ReadyRig App 运行。直接用 CLI 管理这个实例，不要另起 serve，也不要对 App 使用 stop/restart。config set、init、setup 需要实例停止；如果必须修改启动设置，先说明要修改的项目和重启影响，让我退出 App，再用相同的数据目录完成配置，之后重新打开 App。App 会读取保存的启动设置。"):context.mode==='daemon'?t("当前实例是后台 daemon。运行中的项目、能力、分享和账号通过 CLI 管理；config set、init、setup 需要实例停止。只有需要修改启动设置时，才用相同命令前缀执行 stop、修改配置、再执行 serve，并检查启动结果。"):t("当前实例由前台进程或进程管理器运行。运行中的项目、能力、分享和账号通过 CLI 管理；config set、init、setup 需要实例停止。修改启动设置前说明重启影响，按原来的进程管理方式停止并恢复服务，避免另起第二个实例。");
+ return [
+  t("请帮我配置这台电脑上的 ReadyRig，使用本机终端中的 ReadyRig CLI。先检查现状，再根据我的需求完成配置。若你不能在这台电脑上执行命令，请明确说明；不要声称已完成配置。"),
+  t("以下命令使用当前实例的 CLI 绝对路径和数据目录。路径已经按 POSIX shell 规则加引号，后续每个 CLI 命令都必须保留相同的 --data-dir。先执行这些只读检查，阅读实际版本、帮助、启动设置、项目和可用工具：\n{0}",{0:commands}),
+  t("如果我已说明目标，就按目标继续；否则先询问要授权哪些目录、使用哪些能力，以及是否需要公网分享或云端账号。保留现有配置，仅修改完成目标所需的项目；通过 CLI 配置，不要直接编辑配置文件。"),
+  t("根据 help 中实际支持的命令操作：projects add/use/list 管理项目；capability <files|terminal|browser|computer> on|off 调整当前运行的能力；share configure/start/status 管理分享；cloud login/status 管理账号绑定。仅在我的需求包含这些功能时操作。需要登录或系统权限时，告诉我具体要完成的步骤，并确认结果。"),
+  lifecycle,
+  t("项目、固定链接配置和账号绑定会保存；capability 和 pause/resume 的变化只作用于当前运行。需要每次启动生效的选项用 config set <key> <value> 保存，具体选项先查 help。Full Access 不能保存，不要默认开启全部能力或公网分享。固定隧道令牌用 share configure --token-stdin 输入，不要把令牌放进命令行或回复中。"),
+  t("完成后重新执行 status、projects list 和 tools，按目标检查 connection、share status 或 cloud status，并做必要的最小功能验证。报告实际改了什么、哪些设置会保留、哪些只对本次运行有效，以及仍需我完成的步骤。不能仅凭修改成功就声称整套流程已验证。"),
+  t("我想要：...")
+ ].join('\n\n');
+}
+async function copyLocalConfiguration(){
+ if(PUBLIC_VIEW)return;
+ const button=$('copy-local-config-prompt');button.disabled=true;button.setAttribute('aria-busy','true');
+ try{
+  const data=await api('/api/state'),prompt=localConfigurationPrompt(data.local_cli);
+  if(!prompt)throw new Error(t('本机配置信息暂不可用，请刷新后重试。'));
+  state.data=data;renderCLI();
+  if(!await copy(prompt)){$('local-config-details').open=true;$('local-config-prompt-text').focus();$('local-config-prompt-text').select()}
+ }catch(e){toast(e.message)}
+ finally{button.removeAttribute('aria-busy');renderCLI()}
+}
+function renderSettings(){renderChrome();renderCLI();const d=state.data;const names={files:[t("文件系统"),t("读取、写入和搜索已添加项目中的文件；目录范围在「项目」中管理。")],terminal:[t("终端执行"),t("允许执行宿主机命令。工作目录限制不是系统沙箱；命令拥有当前用户的权限。")],computer:[t("桌面操作"),t("允许截图、鼠标与键盘操作。此驱动使用真实鼠标，移动到屏幕角落可停止输入。")],browser:[t("Chrome 浏览器"),t("检测已开启的 Chrome 远程调试，通过官方 MCP 开放浏览器工具。所有调用均记录日志。")]};if(!$('capabilities').children.length||$('capabilities').dataset.locale!==readyRigI18n.locale){$('capabilities').dataset.locale=readyRigI18n.locale;$('capabilities').innerHTML=Object.entries(names).map(([k,[title,description]])=>`<div class="capability"><span class="tool-icon ${k}" aria-hidden="true">${icons[k]}</span><div class="capability-copy"><strong id="capability-${k}-label">${title}</strong><p id="capability-${k}-description">${description}</p></div><div class="capability-control"><span class="switch-state" data-capability-state="${k}" aria-hidden="true"></span><button class="toggle" role="switch" aria-checked="false" aria-labelledby="capability-${k}-label" aria-describedby="capability-${k}-description" data-capability="${k}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></button></div></div>`).join('')}
  for(const b of $('capabilities').querySelectorAll('[data-capability]')){const k=b.dataset.capability,enabled=!!d.enabled[k],pending=pendingCapabilities.has(k);b.setAttribute('aria-checked',String(enabled));b.setAttribute('aria-disabled',String(pending||PUBLIC_VIEW));b.disabled=PUBLIC_VIEW;b.setAttribute('aria-busy',String(pending));b.previousElementSibling.textContent=pending?t("切换中"):enabled?t("已开启"):t("已关闭")}
  const p=d.permissions;$('permissions').innerHTML=p.supported?`<div class="permission-row"><span>${t("屏幕录制")}</span><span class="badge ${p.screen?'success':'denied'}">${p.screen?t("已授权"):t("未授权")}</span></div><div class="permission-row"><span>${t("辅助功能")}</span><span class="badge ${p.accessibility?'success':'denied'}">${p.accessibility?t("已授权"):t("未授权")}</span></div>`:`<p>${t("此构建不支持原生桌面操作。需 macOS + CGO 构建。")}</p>`;$('workspace-path').textContent=d.workspace;renderConnection()}
 async function toggleCapability(category){
@@ -165,7 +207,7 @@ function openTool(name){
  $('tool-arguments').value=JSON.stringify(readyRigI18n.translateData(examples[name]||{}),null,2);
  renderToolText();$('tool-result').classList.add('hidden');$('tool-dialog').showModal();
 }
-async function copy(text){try{await navigator.clipboard.writeText(text);toast(t("已复制"))}catch{const el=document.createElement('textarea');el.value=text;document.body.appendChild(el);el.select();const ok=document.execCommand('copy');el.remove();toast(ok?t("已复制"):t("无法访问剪贴板，请手动复制"))}}
+async function copy(text){try{await navigator.clipboard.writeText(text);toast(t("已复制"));return true}catch{const el=document.createElement('textarea');el.value=text;document.body.appendChild(el);el.select();let ok=false;try{ok=document.execCommand('copy')}catch{}finally{el.remove()}toast(ok?t("已复制"):t("无法访问剪贴板，请手动复制"));return ok}}
 function theme(){const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';localStorage.setItem('readyrig-theme',dark?'dark':'light')}
 document.documentElement.dataset.theme=localStorage.getItem('readyrig-theme')||localStorage.getItem('relay-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.page)showPage(b.dataset.page);if('chromeAuthorize'in b.dataset){b.disabled=true;try{const result=await api('/api/chrome/authorize',{});if(result.ok){await api('/api/chrome/refresh',{});toast(t("已选择调试入口，正在重新检测"));await refresh()}}finally{b.disabled=false}}if('chromeRefresh'in b.dataset){await api('/api/chrome/refresh',{});toast(t("正在重新检测 Chrome"));await refresh()}if('category'in b.dataset){state.category=b.dataset.category;state.offset=0;state.selected=null;document.querySelectorAll('[data-category]').forEach(t=>{t.classList.toggle('active',t===b);t.setAttribute('aria-pressed',String(t===b))});await refresh()}if(b.dataset.call){state.selected=state.selected===b.dataset.call?null:b.dataset.call;renderCalls();await loadDetail()}if(b.dataset.session){state.session=b.dataset.session;state.offset=0;state.selected=null;showPage('activity');await refresh()}if(b.dataset.tool)openTool(b.dataset.tool);if('testFiles'in b.dataset)openTool('list_directory');if('viewReplay'in b.dataset){state.replayTarget=b.dataset.viewReplay;state.frameSignature='';showPage('replay')}if(b.dataset.replaySide){state.replaySide=b.dataset.replaySide;paintReplay()}if(b.dataset.openCall){state.selected=b.dataset.openCall;showPage('activity');await loadDetail()}if(b.dataset.cancel){b.disabled=true;await api('/api/calls/'+encodeURIComponent(b.dataset.cancel)+'/cancel',{});toast(t("已请求停止，等待进程退出"));await refresh()}if('copyResult'in b.dataset&&state.detail)await copy(JSON.stringify(state.detail.call.result,null,2));if(b.dataset.capability)await toggleCapability(b.dataset.capability);if('frame'in b.dataset){stopReplay();state.frame=Number(b.dataset.frame);await renderFrame()}}catch(e){toast(e.message)}});
@@ -184,6 +226,7 @@ $('play').onclick=async()=>{
  replayTimer=-1;await tick();
 };
 $('copy-prompt').onclick=()=>copyConnection('prompt');$('copy-address').onclick=()=>copyConnection('address');$('copy-config').onclick=()=>copyConnection('config');
+$('copy-local-config-prompt').onclick=copyLocalConfiguration;
 $('export').onclick=async()=>{try{const res=await fetch(route('/api/export?'+params()));if(!res.ok)throw new Error(t("导出失败"));const url=URL.createObjectURL(await res.blob());const a=document.createElement('a');a.href=url;a.download='readyrig-calls.ndjson';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(t("日志已导出"))}catch(e){toast(e.message)}};
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showPage('activity');$('search').focus()}if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='j'){e.preventDefault();theme()}});
 async function connect(){try{const key=new URLSearchParams(location.hash.slice(1)).get('key');if(key&&!PUBLIC_VIEW){await api('/api/login',{key});history.replaceState(null,'',location.pathname+location.search)}await refresh();if(state.connected&&!eventStream&&!PUBLIC_VIEW){eventStream=new EventSource(route('/api/events'));eventStream.onmessage=()=>refresh();eventStream.onerror=()=>{$('live').classList.add('off')}}}catch(e){error(e.message)}}

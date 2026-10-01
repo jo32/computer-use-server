@@ -203,7 +203,7 @@ function Download() {
         <div className="cli-install-command">
           <pre><code>{installCommand}</code></pre>
           <CopyButton text={installCommand} label="复制安装命令" />
-          <span className="download-meta">{t('支持 Intel / AMD 和 ARM；安装后运行 readyrig help。')}</span>
+          <span className="download-meta">{t('支持 Intel / AMD 和 ARM；安装后自动进入配置向导，运行 readyrig 打开终端界面。')}</span>
         </div>
       </div>
       <div className="download-under">

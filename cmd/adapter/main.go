@@ -4,6 +4,7 @@ import (
 	"computer-use-server/internal/app"
 	"computer-use-server/internal/buildinfo"
 	"computer-use-server/internal/chromemcp"
+	"computer-use-server/internal/cliinstall"
 	"computer-use-server/internal/desktop"
 	"computer-use-server/internal/server"
 	"computer-use-server/internal/tunnel"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -45,20 +47,31 @@ func run() (runErr error) {
 	}
 	mode := "desktop"
 	if !desktop.Available {
-		mode = "web"
+		mode = "tui"
+		if runtime.GOOS == "windows" {
+			mode = "web"
+		}
 	}
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+	explicitCommand := len(args) > 0 && !strings.HasPrefix(args[0], "-")
+	if explicitCommand {
 		mode, args = args[0], args[1:]
 	}
 	if mode == "serve" {
 		mode = "web"
 	}
-	flags, opts, err := startupFlags(home, dataDir, mode != "desktop" && mode != "help" && mode != "version")
+	// Startup flags without a command retain their existing launch behavior.
+	if mode == "tui" && !explicitCommand && len(args) > 0 && args[0] != "--help" && args[0] != "-h" {
+		mode = "web"
+	}
+	flags, opts, err := startupFlags(home, dataDir, mode != "help" && mode != "version")
 	if err != nil {
 		return err
 	}
 	if handled, err := manageCLI(mode, args, flags, opts); handled {
 		return err
+	}
+	if mode == "setup" {
+		flags.Bool("if-needed", false, "Skip the guide when startup settings already exist")
 	}
 	if err = flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -69,8 +82,17 @@ func run() (runErr error) {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
 	}
-	if mode != "desktop" && mode != "web" && mode != "update" && mode != "init" {
+	if mode != "desktop" && mode != "web" && mode != "update" && mode != "init" && mode != "setup" && mode != "tui" && mode != "stop" && mode != "restart" {
 		return fmt.Errorf("unknown command %q; see 'readyrig help'", mode)
+	}
+	if mode == "tui" {
+		return runTUI(flags, opts)
+	}
+	if mode == "setup" {
+		return runSetup(flags, opts)
+	}
+	if mode == "stop" {
+		return stopDaemon(opts.DataDir, os.Stdout)
 	}
 	if err := validateOptions(opts); err != nil {
 		return err
@@ -93,6 +115,15 @@ func run() (runErr error) {
 		fmt.Println("Saved CLI configuration:", filepath.Join(opts.DataDir, configFile))
 		fmt.Println("Start ReadyRig with: readyrig serve --data-dir", opts.DataDir)
 		return nil
+	}
+	if mode == "restart" {
+		if err := stopDaemon(opts.DataDir, os.Stdout); err != nil {
+			return err
+		}
+		return startDaemon(flags, opts, os.Stdout)
+	}
+	if mode == "web" && !opts.Foreground && runtime.GOOS != "windows" {
+		return startDaemon(flags, opts, os.Stdout)
 	}
 	feed := opts.UpdateFeed
 	if feed == "" && opts.UpdateRepo != "" {
@@ -141,6 +172,22 @@ func run() (runErr error) {
 	}
 	closeApp := sync.OnceFunc(a.Close)
 	defer closeApp()
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if runtime.GOOS != "windows" {
+		a.Server.LocalCLI = localCLIContext(executable, opts.DataDir, mode)
+	}
+	if mode == "desktop" && runtime.GOOS == "darwin" {
+		status := cliinstall.Install(cliinstall.Options{Executable: executable, Home: home, Shell: os.Getenv("SHELL"), ZDotDir: os.Getenv("ZDOTDIR"), ConfigHome: os.Getenv("XDG_CONFIG_HOME")})
+		if status.State != "" {
+			a.Server.CLI = &status
+		}
+		if status.State == "error" {
+			log.Printf("CLI installation: %s", status.Error)
+		}
+	}
 	a.Server.Updates = updates
 	if opts.Cloudflared != "" {
 		a.Server.Tunnel = tunnel.New(tunnel.Options{Dir: filepath.Join(a.Server.Store.Dir, "cloudflared"), Command: opts.Cloudflared, Changed: a.Server.Registry.Signal, RedactSecrets: a.Server.Registry.AddSecrets})
@@ -199,12 +246,14 @@ func run() (runErr error) {
 			}
 		}()
 	}
-	closeControl, err := startLocalControl(a.Server)
-	if err != nil {
-		return err
-	}
-	defer closeControl()
+	quit := make(chan struct{})
+	requestQuit := sync.OnceFunc(func() { close(quit) })
 	if mode == "desktop" {
+		closeControl, err := startLocalControl(a.Server, runtimeInfo{PID: os.Getpid(), Mode: "desktop"}, nil)
+		if err != nil {
+			return err
+		}
+		defer closeControl()
 		updates.Start()
 		return desktop.Run(a.Server.UI(), a.Server.Registry, updates, func() {
 			// AppKit can terminate without running Go defers.
@@ -221,16 +270,45 @@ func run() (runErr error) {
 		return err
 	}
 	defer server.Shutdown(web)
-	fmt.Printf("Dashboard: http://%s/#key=%s\n", uiln.Addr(), a.Server.UIKey)
+	dashboard := fmt.Sprintf("http://%s/#key=%s", uiln.Addr(), a.Server.UIKey)
+	fmt.Println("Dashboard:", dashboard)
+	runMode := "foreground"
+	if os.Getenv("READYRIG_DAEMON_CHILD") == "1" {
+		runMode = "daemon"
+	}
+	// Publish the local control endpoint only after both listeners are ready.
+	closeControl, err := startLocalControl(a.Server, runtimeInfo{PID: os.Getpid(), Mode: runMode, Dashboard: dashboard}, requestQuit)
+	if err != nil {
+		return err
+	}
+	defer closeControl()
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
 	updates.Start()
 	select {
 	case <-stop:
+	case <-quit:
 	case <-updates.RestartSignal():
 	}
 	return nil
+}
+
+func localCLIContext(executable, dataDir, mode string) *server.LocalCLI {
+	command := executable
+	// Use the helper matching this app, even when an independent CLI is on PATH.
+	if helper, bundled := cliinstall.HelperPath(executable); bundled {
+		if info, err := os.Stat(helper); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			command = helper
+		}
+	}
+	if mode == "web" {
+		mode = "foreground"
+		if os.Getenv("READYRIG_DAEMON_CHILD") == "1" {
+			mode = "daemon"
+		}
+	}
+	return &server.LocalCLI{Command: command, DataDir: dataDir, Mode: mode}
 }
 
 // Reuse existing installations without moving their private logs or projects.

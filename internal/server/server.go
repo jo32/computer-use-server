@@ -3,6 +3,7 @@ package server
 import (
 	"computer-use-server/internal/buildinfo"
 	"computer-use-server/internal/chromemcp"
+	"computer-use-server/internal/cliinstall"
 	"computer-use-server/internal/cloud"
 	"computer-use-server/internal/computer"
 	"computer-use-server/internal/harness"
@@ -44,6 +45,8 @@ type Server struct {
 	Updates                                   *update.Manager
 	Tunnel                                    *tunnel.Manager
 	Cloud                                     *cloud.Client
+	CLI                                       *cliinstall.Status
+	LocalCLI                                  *LocalCLI
 	Workspace, GatewayAddr, AccessPath, UIKey string
 	AllowedIPs                                []*net.IPNet
 	mu                                        sync.Mutex
@@ -52,6 +55,15 @@ type Server struct {
 	sessions                                  map[string]mcpSession
 	openLocalPath                             localPathOpener
 }
+
+// LocalCLI identifies the command and instance to use for local configuration.
+// It contains no connection credentials and is excluded from the public console.
+type LocalCLI struct {
+	Command string `json:"command"`
+	DataDir string `json:"data_dir"`
+	Mode    string `json:"mode"`
+}
+
 type mcpSession struct {
 	Client string
 	At     time.Time
@@ -136,11 +148,15 @@ func (s *Server) UI() http.Handler {
 		gateway, origin := s.connection(r)
 		var updates any
 		var cloudState any
+		var cliState any
+		var localCLI any
 		if !remote {
 			updates = s.updateStatus()
 			cloudState = s.cloudStatus()
+			cliState = s.CLI
+			localCLI = s.LocalCLI
 		}
-		write(w, map[string]any{"public": remote, "paused": paused, "enabled": enabled, "summary": summary, "sessions": sessions, "tools": s.Registry.Specs(), "permissions": s.Computer.Permissions(), "workspace": s.activeWorkspace(), "project_access": s.projectState(), "local_open": localopen.Supported(), "gateway": gateway, "gateway_origin": origin, "version": buildinfo.Version, "chrome": chrome, "update": updates, "cloud": cloudState, "tunnel": s.tunnelStatus(remote)})
+		write(w, map[string]any{"public": remote, "paused": paused, "enabled": enabled, "summary": summary, "sessions": sessions, "tools": s.Registry.Specs(), "permissions": s.Computer.Permissions(), "workspace": s.activeWorkspace(), "project_access": s.projectState(), "local_open": localopen.Supported(), "gateway": gateway, "gateway_origin": origin, "version": buildinfo.Version, "chrome": chrome, "update": updates, "cloud": cloudState, "cli": cliState, "local_cli": localCLI, "tunnel": s.tunnelStatus(remote)})
 	})
 	mux.HandleFunc("POST /api/chrome/refresh", func(w http.ResponseWriter, r *http.Request) {
 		if s.Chrome != nil {

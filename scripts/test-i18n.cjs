@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const assets = path.join(root, 'internal/server/assets');
 const englishScript = fs.readFileSync(path.join(assets, 'locales/en.js'), 'utf8');
@@ -100,4 +101,83 @@ test('localized connection prompts keep real URLs and tool routes',async()=>{
   assert.ok(prompt.includes('"Public"')||prompt.includes('“Public”'));
   await language.setPreference('zh-CN');
   assert.ok(context.connectionPrompt(url,'local').includes('请连接我电脑上的 ReadyRig'));
+});
+
+function localPromptContext(overrides={}) {
+  const {language}=harness().context;
+  const source=fs.readFileSync(path.join(assets,'app.js'),'utf8');
+  const start=source.indexOf('function shellArgument(');
+  const end=source.indexOf('\nfunction renderSettings()',start);
+  const context={t:language.t,PUBLIC_VIEW:false,...overrides};
+  vm.createContext(context);vm.runInContext(source.slice(start,end),context);
+  return {context,language};
+}
+
+test('local setup prompts target the current instance and describe its lifecycle in both languages',async()=>{
+  const {context,language}=localPromptContext();
+  const instance={command:"/Applications/ReadyRig O'Reilly.app/Contents/Helpers/readyrig",data_dir:"/Users/me/private data'$(touch unintended)`echo x`",mode:'desktop'};
+  const prefix=context.shellArgument(instance.command)+' --data-dir '+context.shellArgument(instance.data_dir);
+  const prompt=context.localConfigurationPrompt(instance);
+  for(const command of ['version','help','status','config show','projects list','tools'])assert.ok(prompt.includes(prefix+' '+command));
+  assert.ok(prompt.includes('The ReadyRig app owns this instance'));
+  assert.ok(prompt.includes('The app reads the saved startup settings'));
+  assert.ok(prompt.includes('--token-stdin'));
+  assert.ok(context.localConfigurationPrompt({...instance,mode:'daemon'}).includes('background daemon'));
+  assert.ok(context.localConfigurationPrompt({...instance,mode:'foreground'}).includes('original process management method'));
+  await language.setPreference('zh-CN');
+  assert.ok(context.localConfigurationPrompt(instance).includes('请帮我配置这台电脑上的 ReadyRig'));
+  assert.ok(context.localConfigurationPrompt(instance).includes('App 会读取保存的启动设置'));
+  assert.equal(context.localConfigurationPrompt({command:instance.command}), '');
+  context.PUBLIC_VIEW=true;
+  assert.equal(context.localConfigurationPrompt(instance), '');
+});
+
+test('local prompt paths remain literal POSIX shell arguments',()=>{
+  const {context}=localPromptContext();
+  for(const value of ["/Users/项目 O'Reilly/$(printf unintended)`printf unintended`",'/data/line\nbreak\tand space','/a/\\backslash']){
+    const result=spawnSync('/bin/sh',['-c',"printf '%s' "+context.shellArgument(value)],{encoding:'utf8'});
+    assert.equal(result.status,0,result.stderr);
+    assert.equal(result.stdout,value);
+  }
+});
+
+test('copy setup prompt refreshes instance details and exposes a manual copy fallback',async()=>{
+  const attributes=new Map(),button={disabled:false,setAttribute:(key,value)=>attributes.set(key,value),removeAttribute:key=>attributes.delete(key)};
+  const textarea={value:'',focus(){this.focused=true},select(){this.selected=true}},details={open:false};
+  const nodes={'copy-local-config-prompt':button,'local-config-details':details,'local-config-prompt-text':textarea};
+  const fresh={local_cli:{command:'/matching/readyrig',data_dir:'/actual/custom/data',mode:'desktop'},gateway:'private-agent-credential',cloud:{token:'private-cloud-token'}};
+  let requests=0,copied='',failure='';
+  const {context}=localPromptContext({
+    $:id=>nodes[id],state:{data:{local_cli:{command:'/old/readyrig',data_dir:'/old/data'}}},
+    api:async path=>{assert.equal(path,'/api/state');requests++;return fresh},
+    renderCLI:()=>{button.disabled=attributes.has('aria-busy')},
+    copy:async text=>{copied=text;return false},toast:text=>{failure=text}
+  });
+  await context.copyLocalConfiguration();
+  assert.equal(requests,1);assert.equal(failure,'');assert.equal(button.disabled,false);
+  assert.ok(copied.includes("'/matching/readyrig' --data-dir '/actual/custom/data'"));
+  for(const secret of ['/old/readyrig','private-agent-credential','private-cloud-token'])assert.ok(!copied.includes(secret));
+  assert.equal(details.open,true);assert.equal(textarea.focused,true);assert.equal(textarea.selected,true);
+  context.api=async()=>({local_cli:null});copied='';
+  await context.copyLocalConfiguration();
+  assert.equal(copied,'');assert.ok(failure.includes('unavailable'));assert.equal(button.disabled,false);
+  context.PUBLIC_VIEW=true;context.api=async()=>{throw Error('public view must not fetch local configuration')};
+  await context.copyLocalConfiguration();
+});
+
+test('a denied clipboard and unsupported legacy copy still allow manual copying',async()=>{
+  const source=fs.readFileSync(path.join(assets,'app.js'),'utf8');
+  const start=source.indexOf('async function copy(text)');
+  const end=source.indexOf('\nfunction theme()',start);
+  const textarea={value:'',select(){},remove(){this.removed=true}};
+  let message='';
+  const context={
+    t:value=>value,toast:value=>{message=value},
+    navigator:{clipboard:{writeText:async()=>{throw Error('denied')}}},
+    document:{createElement:()=>textarea,body:{appendChild(){}},execCommand:()=>{throw Error('unsupported')}}
+  };
+  vm.createContext(context);vm.runInContext(source.slice(start,end),context);
+  assert.equal(await context.copy('setup prompt'),false);
+  assert.equal(textarea.value,'setup prompt');assert.equal(textarea.removed,true);
+  assert.ok(message.includes('手动复制'));
 });

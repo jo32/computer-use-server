@@ -99,6 +99,11 @@ func newAt(o Options, exe string) *Manager {
 	}
 	u.asset = AssetName(runtime.GOOS, runtime.GOARCH, o.GUI, u.bundle)
 	switch {
+	case runtime.GOOS == "darwin" && filepath.Ext(app) == ".app" && filepath.Base(filepath.Dir(exe)) == "Helpers" && filepath.Base(filepath.Dir(filepath.Dir(exe))) == "Contents":
+		// Replacing one helper would invalidate the containing app's signature.
+		// The bundled CLI is updated atomically with its desktop app instead.
+		u.status.State = "managed"
+		u.status.Reason = "此 CLI 随 ReadyRig App 更新，请在 App 中检查更新。"
 	case o.Disabled:
 		u.status.State = "disabled"
 		u.status.Reason = "自动更新已关闭"

@@ -19,9 +19,12 @@ const cliHelp = `ReadyRig — configure and use your local agent service
 
 Usage: readyrig [command] [options]
 
-  serve / web                 Run without a desktop window
+  tui                         Open the terminal dashboard (default for CLI builds)
+  setup [--if-needed]          Interactive configuration guide
+  serve / web                 Start the service in the background
+  stop / restart              Stop or restart the background service
   desktop                     Open the desktop app (desktop builds only)
-  init [startup options]      Save settings for serve/web; create workspace
+  init [startup options]      Save startup settings; create workspace
   config show                 Show saved startup settings
   config set <key> <value>    Change a startup setting while the service is stopped
   status                      Show the running service state as JSON
@@ -46,7 +49,8 @@ Usage: readyrig [command] [options]
   help                        Show this help
 
 Global option: --data-dir PATH (before or after a command)
-With no command, CLI builds run the service; desktop builds open the app.
+With no command, CLI builds open the TUI; desktop builds open the app.
+Use serve --foreground for supervisors or foreground debugging.
 Local control commands support macOS/Linux and require a running instance with the same data directory.
 Full Access is never saved. Runtime switches reset on restart; projects are saved.
 
@@ -60,6 +64,12 @@ type controlEndpoint struct {
 type controlClient struct {
 	client  *http.Client
 	session string
+}
+
+func (c *controlClient) close() {
+	if c != nil {
+		c.client.CloseIdleConnections()
+	}
 }
 
 func (c *controlClient) request(method, path string, input any) (json.RawMessage, error) {
@@ -133,6 +143,7 @@ func manageCLI(mode string, args []string, flags *flag.FlagSet, o *startupOption
 		if err != nil {
 			return true, err
 		}
+		defer client.close()
 		client.session = session
 		b, err := client.request(method, path, input)
 		if err != nil {

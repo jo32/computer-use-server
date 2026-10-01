@@ -19,7 +19,7 @@ import (
 
 // OS permissions authenticate local administration. The runtime file contains
 // only a socket path: file tools cannot read a reusable dashboard credential.
-func startLocalControl(s *server.Server) (func(), error) {
+func startLocalControl(s *server.Server, info runtimeInfo, stop func()) (func(), error) {
 	dir, err := os.MkdirTemp("", "rr-control-")
 	if err != nil {
 		return nil, err
@@ -45,6 +45,23 @@ func startLocalControl(s *server.Server) (func(), error) {
 			http.Error(w, "browser origins cannot manage the CLI socket", 403)
 			return
 		}
+		if r.URL.Path == "/api/runtime" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(info)
+			return
+		}
+		if r.URL.Path == "/api/daemon/stop" && r.Method == http.MethodPost {
+			if stop == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"error":"quit the desktop app to stop this instance"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"stopping":true}`))
+			stop()
+			return
+		}
 		ui.ServeHTTP(w, r)
 	}), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	go control.Serve(ln)
@@ -62,6 +79,10 @@ func startLocalControl(s *server.Server) (func(), error) {
 }
 
 func newControlClient(dir string) (*controlClient, error) {
+	return controlClientWithTimeout(dir, 3*time.Minute)
+}
+
+func controlClientWithTimeout(dir string, timeout time.Duration) (*controlClient, error) {
 	b, err := os.ReadFile(filepath.Join(dir, "control.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("ReadyRig is not running in this data directory; start 'readyrig serve' first")
@@ -83,7 +104,7 @@ func newControlClient(dir string) (*controlClient, error) {
 		return nil, errors.New("ReadyRig local CLI socket is unavailable; start or restart the app")
 	}
 	c := &controlClient{client: &http.Client{
-		Timeout: 3 * time.Minute,
+		Timeout: timeout,
 		// Always use this Unix socket, never TCP, redirects, or an environment proxy.
 		Transport: &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "unix", endpoint.Socket)
@@ -91,6 +112,7 @@ func newControlClient(dir string) (*controlClient, error) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
 	if _, err := c.request(http.MethodGet, "/api/connection", nil); err != nil {
+		c.close()
 		return nil, fmt.Errorf("cannot reach the running ReadyRig service: %w", err)
 	}
 	return c, nil

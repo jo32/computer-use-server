@@ -38,14 +38,14 @@ if [ "$(uname -s)" = Darwin ]; then
     CGO_ENABLED=1 GOOS=darwin GOARCH="$arch" MACOSX_DEPLOYMENT_TARGET=12.0 go build -ldflags "$flags" -o bin/readyrig ./cmd/adapter
     bash scripts/sign-macos.sh bin/readyrig dev.local.relay
     cp bin/readyrig "$out/readyrig-darwin-$arch"
-    VERSION="$version" PACKAGE_OUTPUT_DIR="$apps_dir/$arch" sh scripts/package-macos.sh
+    VERSION="$version" PACKAGE_CLI_BINARY="$out/readyrig-web-darwin-$arch" PACKAGE_OUTPUT_DIR="$apps_dir/$arch" sh scripts/package-macos.sh
     # Previously installed updaters request their old filenames and bundle
     # layouts. Their bridge packages display ReadyRig and retain the signing ID.
     for legacy in Readrig:readrig Relay:relay; do
       legacy_app=${legacy%:*}
       legacy_executable=${legacy#*:}
       cp bin/readyrig "$out/$legacy_executable-darwin-$arch"
-      VERSION="$version" PACKAGE_APP_NAME="$legacy_app" PACKAGE_EXECUTABLE="$legacy_executable" PACKAGE_OUTPUT_DIR="$apps_dir/$arch" sh scripts/package-macos.sh
+      VERSION="$version" PACKAGE_CLI_BINARY="$out/readyrig-web-darwin-$arch" PACKAGE_APP_NAME="$legacy_app" PACKAGE_EXECUTABLE="$legacy_executable" PACKAGE_OUTPUT_DIR="$apps_dir/$arch" sh scripts/package-macos.sh
     done
   done
 fi

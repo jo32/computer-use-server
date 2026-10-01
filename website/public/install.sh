@@ -1,5 +1,5 @@
 #!/bin/sh
-# ReadyRig CLI installer for macOS and Linux. Does not start a service or change permissions.
+# ReadyRig CLI installer for macOS and Linux, followed by the interactive setup guide.
 set -eu
 
 usage() {
@@ -12,9 +12,10 @@ Options:
   --version VERSION   Stable release version (default: latest)
   --install-dir PATH  Destination directory (default: ~/.local/bin)
   --repo OWNER/REPO   GitHub release repository (default: jo32/readyrig)
+  --no-setup          Install only; skip the interactive configuration guide
   --help              Show this help
 
-Environment: READYRIG_VERSION, READYRIG_INSTALL_DIR, READYRIG_INSTALL_REPO
+Environment: READYRIG_VERSION, READYRIG_INSTALL_DIR, READYRIG_INSTALL_REPO, READYRIG_NO_SETUP=1
 EOF
 }
 fail() { printf 'ReadyRig: %s\n' "$*" >&2; exit 1; }
@@ -22,6 +23,8 @@ fail() { printf 'ReadyRig: %s\n' "$*" >&2; exit 1; }
 version=${READYRIG_VERSION:-latest}
 install_dir=${READYRIG_INSTALL_DIR:-${HOME:?HOME must be set}/.local/bin}
 repo=${READYRIG_INSTALL_REPO:-jo32/readyrig}
+setup=1
+[ "${READYRIG_NO_SETUP:-0}" != 1 ] || setup=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version|--install-dir|--repo)
@@ -29,6 +32,7 @@ while [ "$#" -gt 0 ]; do
       case "$1" in --version) version=$2;; --install-dir) install_dir=$2;; --repo) repo=$2;; esac
       shift 2;;
     --help|-h) usage; exit 0;;
+    --no-setup) setup=0; shift;;
     *) fail "Unknown option: $1";;
   esac
 done
@@ -82,4 +86,20 @@ case ":${PATH:-}:" in
   *":$install_dir:"*) ;;
   *) printf 'Add this directory to PATH in your shell profile: %s\n' "$install_dir";;
 esac
-printf '\nNext steps:\n  readyrig init --workspace ~/agent_workspace --allow-shell --no-chrome\n  readyrig serve\n\nRun readyrig help for commands.\n'
+if [ "$setup" = 1 ]; then
+  # curl | sh owns stdin. Read the guide's answers from the controlling terminal.
+  if ( : </dev/tty >/dev/tty ) 2>/dev/null; then
+    if grep -Eq '^[[:space:]]+setup([[:space:]]|$)' "$temp/help.txt"; then
+      printf '\nOpening the ReadyRig configuration guide...\n'
+      if ! "$install_dir/readyrig" setup --if-needed </dev/tty >/dev/tty; then
+        printf '\nReadyRig is installed. Resume configuration with: "%s/readyrig" setup\n' "$install_dir" >&2
+        exit 1
+      fi
+    else
+      printf '\nThis release has no interactive guide. Install a newer release to use setup and the TUI.\n'
+    fi
+  else
+    printf '\nNo interactive terminal detected. Run "%s/readyrig" setup when you open a terminal.\n' "$install_dir"
+  fi
+fi
+printf '\nRun "%s/readyrig" to open the terminal dashboard.\nRun "%s/readyrig" help for commands.\n' "$install_dir" "$install_dir"

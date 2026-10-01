@@ -3,12 +3,28 @@
 import hashlib
 import os
 from pathlib import Path
+import pty
+import select
+import shlex
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "website/public/install.sh"
-BINARY = b"#!/bin/sh\nprintf 'ReadyRig fixture: config set\\n'\n"
+BINARY = b'''#!/bin/sh
+case "$1" in
+  help) printf 'ReadyRig fixture: config set\\n  setup [--if-needed]  Interactive guide\\n';;
+  setup)
+    [ -t 0 ] && [ -t 1 ] || exit 7
+    printf '%s\\n' "$*" > "$MOCK_ROOT/setup-invocations"
+    printf 'Workspace: '
+    read -r answer
+    printf '%s\\n' "$answer" > "$MOCK_ROOT/setup-answer"
+    [ "${MOCK_SETUP_FAIL:-0}" != 1 ] || exit 1;;
+esac
+'''
 
 
 class InstallerTests(unittest.TestCase):
@@ -24,7 +40,7 @@ class InstallerTests(unittest.TestCase):
         self.installed.write_bytes(b"existing installation")
         self.env = dict(os.environ, PATH=str(self.mock) + os.pathsep + os.environ["PATH"],
                         HOME=str(self.root), MOCK_ROOT=str(self.root), MOCK_OS="Linux", MOCK_ARCH="x86_64")
-        for name in ["READYRIG_VERSION", "READYRIG_INSTALL_DIR", "READYRIG_INSTALL_REPO"]:
+        for name in ["READYRIG_VERSION", "READYRIG_INSTALL_DIR", "READYRIG_INSTALL_REPO", "READYRIG_NO_SETUP"]:
             self.env.pop(name, None)
         (self.root / "binary").write_bytes(BINARY)
         self.write_executable("uname", "#!/bin/sh\ncase $1 in -s) printf '%s\\n' \"$MOCK_OS\";; -m) printf '%s\\n' \"$MOCK_ARCH\";; esac\n")
@@ -128,6 +144,80 @@ output.write_bytes(source.read_bytes())
         self.assertIn("--install-dir", result.stdout)
         self.assertFalse((self.root / "requests").exists())
         self.assertFalse((self.root / ".local/share").exists())
+
+    def install_with_terminal(self, *arguments):
+        # A real controlling terminal proves curl | sh cannot consume the guide's answers.
+        command = 'cat ' + shlex.quote(str(SCRIPT)) + ' | sh -s -- ' + shlex.join([
+            '--install-dir', str(self.destination), *arguments])
+        pid, terminal = pty.fork()
+        if pid == 0:
+            os.execvpe('sh', ['sh', '-c', command], self.env)
+        output = bytearray()
+        answered = False
+        status = None
+        try:
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                readable, _, _ = select.select([terminal], [], [], 0.1)
+                if readable:
+                    try:
+                        chunk = os.read(terminal, 65536)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    if b'Workspace: ' in output and not answered:
+                        os.write(terminal, b'/tmp/my workspace\n')
+                        answered = True
+                waited, status = os.waitpid(pid, os.WNOHANG)
+                if waited:
+                    break
+                status = None
+            if status is None:
+                waited, status = os.waitpid(pid, os.WNOHANG)
+                if not waited:
+                    os.kill(pid, signal.SIGKILL)
+                    _, status = os.waitpid(pid, 0)
+                    self.fail('installer did not return: ' + output.decode(errors='replace'))
+        finally:
+            os.close(terminal)
+        self.assertFalse(list(self.destination.glob('.readyrig-install.*')))
+        return os.waitstatus_to_exitcode(status), output.decode(errors='replace')
+
+    def test_piped_installer_opens_guide_on_controlling_terminal(self):
+        self.checksums()
+        code, output = self.install_with_terminal()
+        self.assertEqual(code, 0, output)
+        self.assertIn('Opening the ReadyRig configuration guide', output)
+        self.assertEqual((self.root / 'setup-invocations').read_text(), 'setup --if-needed\n')
+        self.assertEqual((self.root / 'setup-answer').read_text(), '/tmp/my workspace\n')
+
+    def test_no_setup_flag_and_environment_skip_guide_even_with_terminal(self):
+        self.checksums()
+        code, output = self.install_with_terminal('--no-setup')
+        self.assertEqual(code, 0, output)
+        self.assertFalse((self.root / 'setup-invocations').exists())
+        self.env['READYRIG_NO_SETUP'] = '1'
+        code, output = self.install_with_terminal()
+        self.assertEqual(code, 0, output)
+        self.assertFalse((self.root / 'setup-invocations').exists())
+
+    def test_setup_failure_keeps_installed_binary_and_prints_resume_command(self):
+        self.checksums()
+        self.env['MOCK_SETUP_FAIL'] = '1'
+        code, output = self.install_with_terminal()
+        self.assertNotEqual(code, 0, output)
+        self.assertEqual(self.installed.read_bytes(), BINARY)
+        self.assertIn('Resume configuration with:', output)
+
+    def test_noninteractive_install_prints_guide_command(self):
+        self.checksums()
+        result = self.install(pipe=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('No interactive terminal detected', result.stdout)
+        self.assertIn('readyrig" setup', result.stdout)
+        self.assertFalse((self.root / 'setup-invocations').exists())
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ func serviceUnit(executable, dataDir string) (string, error) {
 		return "", err
 	}
 	return "[Unit]\nDescription=ReadyRig local agent service\nAfter=network.target\n\n" +
-		"[Service]\nType=simple\nExecStart=:" + exe + " serve --data-dir " + data + "\nRestart=on-failure\nRestartSec=5\nUMask=0077\n\n" +
+		"[Service]\nType=simple\nExecStart=:" + exe + " serve --foreground --data-dir " + data + "\nRestart=on-failure\nRestartSec=5\nUMask=0077\n\n" +
 		"[Install]\nWantedBy=default.target\n", nil
 }
 
@@ -55,8 +55,9 @@ func manageService(args []string, dataDir string) error {
 		fmt.Print(unit)
 		return nil
 	}
+	legacyUnit := strings.Replace(unit, " serve --foreground --data-dir ", " serve --data-dir ", 1)
 	if runtime.GOOS != "linux" {
-		return errors.New("background service management requires Linux with systemd; use 'readyrig serve' on other systems")
+		return errors.New("systemd service management requires Linux; use 'readyrig serve' on macOS")
 	}
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -75,7 +76,11 @@ func manageService(args []string, dataDir string) error {
 		}
 		// Do not replace an existing unit with a different executable or data directory.
 		if existing, err := os.ReadFile(path); err == nil {
-			if string(existing) != unit {
+			if string(existing) == legacyUnit {
+				if err := os.WriteFile(path, []byte(unit), 0600); err != nil {
+					return err
+				}
+			} else if string(existing) != unit {
 				return fmt.Errorf("%s already exists with different settings; uninstall it first", path)
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -108,7 +113,7 @@ func manageService(args []string, dataDir string) error {
 		if err != nil {
 			return err
 		}
-		if string(existing) != unit {
+		if string(existing) != unit && string(existing) != legacyUnit {
 			return errors.New("installed service uses different settings; use its original binary and --data-dir to uninstall it")
 		}
 		if err := run("disable", "--now", "readyrig.service"); err != nil {

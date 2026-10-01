@@ -385,7 +385,7 @@
   "安装 CLI，配置工具和项目目录，无需打开桌面窗口。": "Install the CLI to configure tools and project folders without opening a desktop window.",
   "CLI 使用指南": "CLI guide",
   "复制安装命令": "Copy install command",
-  "支持 Intel / AMD 和 ARM；安装后运行 readyrig help。": "Supports Intel / AMD and ARM. Run readyrig help after installation.",
+  "支持 Intel / AMD 和 ARM；安装后自动进入配置向导，运行 readyrig 打开终端界面。": "Supports Intel / AMD and ARM. Setup opens after installation; run readyrig for the terminal dashboard.",
   "每台电脑，分别控制。": "Control each computer separately.",
   "在本机或云端调整工具开关，暂停或恢复控制。每台电脑的项目目录和系统权限仍在本机设置。": "Enable tools, pause, or resume control locally or from the cloud. Project folders and system permissions stay configured on each computer.",
   "本机与云端控制": "Local and cloud controls",
