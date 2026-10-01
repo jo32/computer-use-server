@@ -2,7 +2,9 @@
 
 Notable changes to ReadyRig are recorded here. For setup and current behavior, see the [README](README.md).
 
-## 0.6.4
+## 0.6.5
+
+Version 0.6.4 did not publish installation packages. This release includes all changes prepared for that version.
 
 ### Added
 
@@ -19,6 +21,7 @@ Notable changes to ReadyRig are recorded here. For setup and current behavior, s
 
 ### Fixed
 
+- Pasting long or Unicode project paths into the terminal dashboard no longer redraws the entire screen for every character, keeping input responsive on slower terminals.
 - Chrome approval-mode debugging can be detected through its local server before reading protected profile files. Background detection uses a rejected probe path to avoid opening approval dialogs; browser operations still require Chrome approval.
 
 ## 0.6.3

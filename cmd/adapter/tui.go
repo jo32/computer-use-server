@@ -99,12 +99,20 @@ func runTUI(f *flag.FlagSet, o *startupOptions) error {
 	defer tick.Stop()
 	results := make(chan error, 1)
 	var pending []string
-	for {
+	render := func() {
 		width, height, err := term.GetSize(int(os.Stdout.Fd()))
 		if err != nil {
 			width, height = 80, 24
 		}
 		fmt.Fprint(os.Stdout, u.render(width, height))
+	}
+	render()
+	// Pasting a path can deliver hundreds of keys at once. Redraw at most
+	// 30 times per second so screen output does not delay the remaining input.
+	frames := time.NewTicker(time.Second / 30)
+	defer frames.Stop()
+	dirty := false
+	for {
 		input := (<-chan string)(keys)
 		fromPending := !u.busy && len(pending) > 0
 		if fromPending {
@@ -115,11 +123,18 @@ func runTUI(f *flag.FlagSet, o *startupOptions) error {
 		select {
 		case <-stop:
 			return nil
+		case <-frames.C:
+			if dirty {
+				render()
+				dirty = false
+			}
 		case <-tick.C:
 			if !u.busy {
 				u.refresh()
+				dirty = true
 			}
 		case err := <-results:
+			dirty = true
 			u.busy = false
 			if err != nil {
 				u.message = err.Error()
@@ -128,6 +143,7 @@ func runTUI(f *flag.FlagSet, o *startupOptions) error {
 			}
 			u.refresh()
 		case key := <-input:
+			dirty = true
 			if fromPending {
 				pending = pending[1:]
 			}
