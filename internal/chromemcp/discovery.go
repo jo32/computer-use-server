@@ -3,6 +3,8 @@ package chromemcp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,6 +127,13 @@ func discoverWithReader(ctx context.Context, opts Options, bins, profiles []stri
 		u, _ := url.Parse(base)
 		explicitPort = u.Port()
 	}
+	// Prefer the default local server without touching Chrome's protected profile.
+	// Explicit profiles must not silently attach to a different browser.
+	if opts.UserDataDir == "" && opts.BrowserURL == "" {
+		if t, err := probeURL(ctx, "http://127.0.0.1:9222"); err == nil {
+			return t, nil
+		}
+	}
 	if opts.UserDataDir != "" {
 		profiles = []string{opts.UserDataDir}
 	}
@@ -167,12 +176,6 @@ func discoverWithReader(ctx context.Context, opts Options, bins, profiles []stri
 		endpoint := "ws://" + addr + lines[1]
 		return target{Key: endpoint, Args: []string{"--ws-endpoint=" + endpoint}}, nil
 	}
-	// Explicit profiles must not silently attach to a different browser.
-	if opts.UserDataDir == "" && opts.BrowserURL == "" {
-		if t, err := probeURL(ctx, "http://127.0.0.1:9222"); err == nil {
-			return t, nil
-		}
-	}
 	if errors.Is(readErr, os.ErrPermission) {
 		return target{}, ErrDebugPermission
 	}
@@ -200,6 +203,10 @@ func probeURL(ctx context.Context, raw string) (target, error) {
 		return target{}, fmt.Errorf("Chrome 调试入口不可用：%w", err)
 	}
 	defer res.Body.Close()
+	if res.StatusCode == http.StatusNotFound {
+		res.Body.Close()
+		return probeApprovalServer(ctx, client, base)
+	}
 	var version struct {
 		Browser              string
 		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
@@ -216,4 +223,33 @@ func probeURL(ctx context.Context, raw string) (target, error) {
 	}
 	// Use the validated endpoint, avoiding another discovery/redirect in the child.
 	return target{Key: version.WebSocketDebuggerURL, Args: []string{"--ws-endpoint=" + version.WebSocketDebuggerURL}}, nil
+}
+
+func probeApprovalServer(ctx context.Context, client *http.Client, base string) (target, error) {
+	// Approval mode disables /json/version and accepts /devtools/browser without
+	// a GUID. Probe an unsupported path: Chrome rejects it before asking for
+	// approval, so periodic discovery never opens a connection permission dialog.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/devtools/readyrig-probe", nil)
+	if err != nil {
+		return target{}, err
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return target{}, err
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", base64.StdEncoding.EncodeToString(nonce[:]))
+	res, err := client.Do(req)
+	if err != nil {
+		return target{}, fmt.Errorf("Chrome 调试入口不可用：%w", err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, 256))
+	if err != nil || res.StatusCode != http.StatusForbidden || string(body) != "Connection rejected" {
+		return target{}, fmt.Errorf("此端口没有提供 Chrome 调试服务")
+	}
+	endpoint := "ws" + strings.TrimPrefix(base, "http") + "/devtools/browser"
+	return target{Key: endpoint, Args: []string{"--ws-endpoint=" + endpoint}}, nil
 }
