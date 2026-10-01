@@ -2,6 +2,16 @@
 
 Notable changes to ReadyRig are recorded here. For setup and current behavior, see the [README](README.md).
 
+## 0.6.8
+
+### Added
+
+- Unapproved Screen Recording and Accessibility permissions in the macOS app now have shortcuts that open the corresponding System Settings pane.
+
+### Fixed
+
+- The update help text now correctly says capability switches restore their last selection after restarting.
+
 ## 0.6.7
 
 ### Fixed

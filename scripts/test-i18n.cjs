@@ -181,3 +181,74 @@ test('a denied clipboard and unsupported legacy copy still allow manual copying'
   assert.equal(textarea.value,'setup prompt');assert.equal(textarea.removed,true);
   assert.ok(message.includes('手动复制'));
 });
+
+function permissionContext(publicView=false) {
+  const {language}=harness().context;
+  const box={dataset:{},markup:'',writes:0,get innerHTML(){return this.markup},set innerHTML(value){this.markup=value;this.writes++}};
+  const clicks=[];
+  const context={
+    t:language.t,readyRigI18n:language,esc:value=>value,PUBLIC_VIEW:publicView,
+    pendingPermissions:new Set(),state:{data:{permissions:{supported:true,screen:false,accessibility:false}}},
+    $:()=>box,document:{addEventListener:(_event,fn)=>clicks.push(fn)}
+  };
+  const source=fs.readFileSync(path.join(assets,'app.js'),'utf8');
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('function renderPermissions()'),source.indexOf('async function toggleCapability(')),context);
+  const clickStart=source.lastIndexOf("document.addEventListener('click',async e=>{");
+  vm.runInContext(source.slice(clickStart,source.indexOf("\nwindow.addEventListener('readyrig-language-error'",clickStart)),context);
+  return {context,box,language,click:permission=>clicks[0]({target:{closest:()=>({dataset:{systemPermission:permission}})}})};
+}
+
+test('system permission shortcuts reflect authorization and preserve controls during polling',async()=>{
+  const {context,box,language}=permissionContext();
+  context.renderPermissions();
+  assert.match(box.innerHTML,/data-system-permission="screen"/);
+  assert.match(box.innerHTML,/aria-label="Screen recording: Not allowed, grant access"/);
+  assert.match(box.innerHTML,/data-system-permission="accessibility"/);
+  const writes=box.writes;
+  context.renderPermissions();
+  assert.equal(box.writes,writes,'polling must preserve the focused control');
+  context.state.data.permissions.screen=true;
+  context.renderPermissions();
+  assert.doesNotMatch(box.innerHTML,/data-system-permission="screen"/);
+  assert.match(box.innerHTML,/badge success/);
+  await language.setPreference('zh-CN');
+  context.renderPermissions();
+  assert.match(box.innerHTML,/未授权 · 去授权/);
+  const remote=permissionContext(true);
+  remote.context.renderPermissions();
+  assert.doesNotMatch(remote.box.innerHTML,/<button/);
+  context.state.data.permissions.supported=false;
+  context.renderPermissions();
+  assert.doesNotMatch(box.innerHTML,/<button/);
+});
+
+test('permission button clicks open the selected settings once and recover after failure',async()=>{
+  const {context,box,click}=permissionContext();
+  const requests=[],messages=[];
+  let finish;
+  context.api=(path,body)=>{
+    requests.push({path,permission:body.permission});
+    return new Promise(resolve=>{finish=resolve});
+  };
+  context.toast=message=>messages.push(message);
+  const pending=click('screen');
+  assert.match(box.innerHTML,/aria-busy="true" disabled/);
+  await click('screen');
+  assert.deepEqual(requests,[{path:'/api/access/system-settings',permission:'screen'}]);
+  finish({ok:true});await pending;
+  assert.match(messages[0],/restart ReadyRig/);
+  assert.doesNotMatch(box.innerHTML,/ disabled/);
+  assert.equal(context.state.data.permissions.screen,false,'opening settings must not imply permission was granted');
+  context.api=async(path,body)=>{
+    requests.push({path,permission:body.permission});
+    throw Error('settings launch failed');
+  };
+  await click('accessibility');
+  assert.equal(requests[1].permission,'accessibility');
+  assert.equal(messages[1],'settings launch failed');
+  assert.doesNotMatch(box.innerHTML,/ disabled/);
+  const remote=permissionContext(true);
+  remote.context.api=async()=>{assert.fail('public view cannot open host settings')};
+  await remote.click('screen');
+});

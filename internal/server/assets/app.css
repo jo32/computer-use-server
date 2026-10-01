@@ -137,3 +137,7 @@ html[lang="en"] .seg .nav { padding-inline: 10px; }
 .chrome-guide-body{padding-top:12px;font-size:11px;line-height:1.7;color:var(--muted);overflow-wrap:anywhere}
 .chrome-guide-body ol{padding-left:18px}.chrome-guide-body li+li{margin-top:7px}
 .chrome-guide-body [data-chrome-diagnostic]{padding-top:12px;margin:12px 0 0;border-top:1px solid var(--line-2);font-size:10.5px}
+
+.permission-row{align-items:center;gap:12px;min-height:28px}
+.permission-action{padding:5px 8px;border-radius:5px;background:var(--red-soft);transition:background .15s}
+.permission-action:hover{background:var(--pill);text-decoration:underline;text-underline-offset:3px}

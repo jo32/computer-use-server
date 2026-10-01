@@ -20,6 +20,7 @@ const toolIcons={
 const descriptions={list_projects:'列出已授权项目、默认目录与完全访问状态。',help:'查看当前开放的工具、完整参数定义和启用状态。',read_file:'读取已授权目录中的文本或二进制文件，支持按行查看。',write_file:'在已授权目录中写入文件，自动创建上级目录。',list_directory:'列出目录中的文件、大小和最后修改时间。',search_files:'在已授权目录中搜索文本，返回文件路径和行号。',exec_command:'运行终端命令，可获取执行状态和后续输出。',write_stdin:'向运行中的命令输入内容、获取结果或停止进程。',computer_screenshot:'拍摄主屏幕快照，自动缩放并记录坐标映射。',computer_action:'点击、输入、滚动或拖拽，并获取操作后的截图。'};
 const examples={help:{},read_file:{path:'README.md',start_line:1,end_line:20},write_file:{path:'notes/hello.txt',content:'Hello from ReadyRig'},list_directory:{path:'.'},search_files:{path:'.',query:'TODO'},exec_command:{command:'pwd',cwd:'.',timeout:30,yield_time_ms:1000},write_stdin:{session_id:'填写进程 session_id',chars:'',yield_time_ms:1000},computer_screenshot:{},computer_action:{action:'left_click',frame_id:'填写刚获取的 frame_id',coordinate:[100,100],capture_after:true}};
 const pendingCapabilities=new Set();
+const pendingPermissions=new Set();
 let refreshing=false,again=false,toastTimer,searchTimer,replayTimer,eventStream;
 const uiSession='console-'+(sessionStorage.getItem('readyrig-session')||sessionStorage.getItem('relay-session')||crypto.randomUUID());sessionStorage.setItem('readyrig-session',uiSession.replace(/^console-/,''));
 async function api(path,body){if(PUBLIC_VIEW&&body!==undefined)throw new Error(t("公网控制台仅供查看，请在本机操作"));const res=await fetch(route(path),{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-Session-ID':uiSession,'X-Client-Name':PUBLIC_VIEW?'Public console':'Local console'},body:body===undefined?undefined:JSON.stringify(body)});const data=await res.json();if(!res.ok){const e=new Error(t(data.error||'请求失败'));e.data=data;throw e}return data}
@@ -138,7 +139,25 @@ async function copyLocalConfiguration(){
 }
 function renderSettings(){renderChrome();renderCLI();const d=state.data;const names={files:[t("文件系统"),t("读取、写入和搜索已添加项目中的文件；目录范围在「项目」中管理。")],terminal:[t("终端执行"),t("允许执行宿主机命令。工作目录限制不是系统沙箱；命令拥有当前用户的权限。")],computer:[t("桌面操作"),t("允许截图、鼠标与键盘操作。此驱动使用真实鼠标，移动到屏幕角落可停止输入。")],browser:[t("Chrome 浏览器"),t("检测已开启的 Chrome 远程调试，通过官方 MCP 开放浏览器工具。所有调用均记录日志。")]};if(!$('capabilities').children.length||$('capabilities').dataset.locale!==readyRigI18n.locale){$('capabilities').dataset.locale=readyRigI18n.locale;$('capabilities').innerHTML=Object.entries(names).map(([k,[title,description]])=>`<div class="capability"><span class="tool-icon ${k}" aria-hidden="true">${icons[k]}</span><div class="capability-copy"><strong id="capability-${k}-label">${title}</strong><p id="capability-${k}-description">${description}</p></div><div class="capability-control"><span class="switch-state" data-capability-state="${k}" aria-hidden="true"></span><button class="toggle" role="switch" aria-checked="false" aria-labelledby="capability-${k}-label" aria-describedby="capability-${k}-description" data-capability="${k}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></button></div></div>`).join('')}
  for(const b of $('capabilities').querySelectorAll('[data-capability]')){const k=b.dataset.capability,enabled=!!d.enabled[k],pending=pendingCapabilities.has(k);b.setAttribute('aria-checked',String(enabled));b.setAttribute('aria-disabled',String(pending||PUBLIC_VIEW));b.disabled=PUBLIC_VIEW;b.setAttribute('aria-busy',String(pending));b.previousElementSibling.textContent=pending?t("切换中"):enabled?t("已开启"):t("已关闭")}
- const p=d.permissions;$('permissions').innerHTML=p.supported?`<div class="permission-row"><span>${t("屏幕录制")}</span><span class="badge ${p.screen?'success':'denied'}">${p.screen?t("已授权"):t("未授权")}</span></div><div class="permission-row"><span>${t("辅助功能")}</span><span class="badge ${p.accessibility?'success':'denied'}">${p.accessibility?t("已授权"):t("未授权")}</span></div>`:`<p>${t("此构建不支持原生桌面操作。需 macOS + CGO 构建。")}</p>`;$('workspace-path').textContent=d.workspace;renderConnection()}
+ renderPermissions();$('workspace-path').textContent=d.workspace;renderConnection()}
+function renderPermissions(){
+ const p=state.data.permissions,box=$('permissions');
+ const signature=JSON.stringify([readyRigI18n.locale,p.supported,p.screen,p.accessibility,...pendingPermissions]);
+ if(box.dataset.signature===signature)return;
+ box.dataset.signature=signature;
+ box.innerHTML=p.supported?[['screen',t("屏幕录制")],['accessibility',t("辅助功能")]].map(([permission,label])=>{
+  const granted=p[permission],pending=pendingPermissions.has(permission);
+  const status=granted?`<span class="badge success">${t("已授权")}</span>`:PUBLIC_VIEW?`<span class="badge denied">${t("未授权")}</span>`:`<button type="button" class="badge denied permission-action" data-system-permission="${permission}" aria-label="${esc(t("{0}：未授权，去授权",{0:label}))}" aria-busy="${pending}" ${pending?'disabled':''}>${pending?t("正在打开…"):t("未授权 · 去授权 ↗")}</button>`;
+  return `<div class="permission-row"><span>${esc(label)}</span>${status}</div>`;
+ }).join(''):`<p>${t("此构建不支持原生桌面操作。需 macOS + CGO 构建。")}</p>`;
+}
+async function openPermissionSettings(permission){
+ if(PUBLIC_VIEW||pendingPermissions.has(permission))return;
+ pendingPermissions.add(permission);renderPermissions();
+ try{await api('/api/access/system-settings',{permission});toast(t("已打开权限设置，请授权后重新启动 ReadyRig。"))}
+ catch(e){toast(e.message)}
+ finally{pendingPermissions.delete(permission);renderPermissions()}
+}
 async function toggleCapability(category){
  if(pendingCapabilities.has(category))return;
  const enabled=!state.data.enabled[category];
@@ -453,6 +472,7 @@ $('open-disk-settings').onclick=async()=>{try{await api('/api/access/system-sett
 document.addEventListener('click',async e=>{
  const b=e.target.closest('button');if(!b)return;
  try{
+  if(b.dataset.systemPermission)await openPermissionSettings(b.dataset.systemPermission);
   if(b.dataset.directory)await browseDirectory(b.dataset.directory);
   if(b.dataset.projectRename)openProject(state.data.project_access.projects.find(p=>p.id===b.dataset.projectRename));
   if(b.dataset.projectActivate||b.dataset.projectRemove){b.disabled=true;await api('/api/projects',{action:b.dataset.projectActivate?'activate':'remove',id:b.dataset.projectActivate||b.dataset.projectRemove});await refresh();toast(b.dataset.projectActivate?t("默认项目已切换"):t("已移除目录授权，文件保留"))}

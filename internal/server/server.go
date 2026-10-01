@@ -56,6 +56,7 @@ type Server struct {
 	rateCount                                 int
 	sessions                                  map[string]mcpSession
 	openLocalPath                             localPathOpener
+	openSystemSettings                        systemSettingsOpener
 }
 
 // LocalCLI identifies the command and instance to use for local configuration.
@@ -127,6 +128,7 @@ func (s *Server) UI() http.Handler {
 	mux := http.NewServeMux()
 	s.updateRoutes(mux)
 	s.projectRoutes(mux)
+	s.permissionRoutes(mux)
 	s.localOpenRoutes(mux)
 	s.tunnelRoutes(mux)
 	s.cloudRoutes(mux)

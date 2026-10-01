@@ -6,9 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 )
 
@@ -97,16 +95,5 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 		}
 		sort.Slice(dirs, func(i, j int) bool { return dirs[i]["name"] < dirs[j]["name"] })
 		write(w, map[string]any{"path": path, "parent": filepath.Dir(path), "directories": dirs, "truncated": truncated})
-	})
-	mux.HandleFunc("POST /api/access/system-settings", func(w http.ResponseWriter, r *http.Request) {
-		if runtime.GOOS != "darwin" {
-			problem(w, 400, fmt.Errorf("此入口仅适用于 macOS"))
-			return
-		}
-		if err := exec.CommandContext(r.Context(), "/usr/bin/open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles").Run(); err != nil {
-			problem(w, 500, err)
-			return
-		}
-		write(w, map[string]bool{"ok": true})
 	})
 }
