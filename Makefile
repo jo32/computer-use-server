@@ -10,7 +10,7 @@ cli:
 	go build -tags nogui -ldflags '$(LDFLAGS)' -o bin/readyrig ./cmd/adapter
 	cp bin/readyrig bin/readyrig-web
 test:
-	node --test scripts/test-activity.cjs scripts/test-i18n.cjs
+	node --test scripts/test-activity.cjs scripts/test-i18n.cjs scripts/test-export.cjs
 	go test -race -tags nogui ./...
 	python3 scripts/test-install.py
 	python3 scripts/test-tui.py

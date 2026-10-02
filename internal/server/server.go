@@ -259,25 +259,21 @@ func (s *Server) UI() http.Handler {
 		write(w, map[string]any{"gateway": gateway, "gateway_origin": origin, "tunnel": s.tunnelStatus(isPublicUI(r))})
 	})
 	mux.HandleFunc("GET /api/export", func(w http.ResponseWriter, r *http.Request) {
-		f := filter(r)
-		f.Limit = 500
-		f.Offset = 0
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		w.Header().Set("Content-Disposition", `attachment; filename="adapter-calls.ndjson"`)
-		for {
-			rows, _, err := s.Store.List(f)
-			if err != nil {
-				return
+		w.Header().Set("Content-Disposition", `attachment; filename="readyrig-calls.ndjson"`)
+		w.Header().Set("Trailer", "X-Export-Error")
+		started := false
+		err := s.Store.Export(r.Context(), filter(r), func(total int) {
+			started = true
+			w.Header().Set("X-Export-Total", strconv.Itoa(total))
+			w.WriteHeader(http.StatusOK)
+		}, w)
+		if err != nil {
+			if !started {
+				http.Error(w, "export failed", http.StatusInternalServerError)
+			} else {
+				w.Header().Set("X-Export-Error", "export failed")
 			}
-			for _, row := range rows {
-				if err = json.NewEncoder(w).Encode(row); err != nil {
-					return
-				}
-			}
-			if len(rows) < 500 {
-				return
-			}
-			f.Offset += 500
 		}
 	})
 	mux.HandleFunc("GET /api/events", s.events)

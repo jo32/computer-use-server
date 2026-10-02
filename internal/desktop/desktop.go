@@ -34,8 +34,17 @@ func Run(handler http.Handler, registry *harness.Registry, updates *update.Manag
 	var window *application.WebviewWindow
 	var authorizing atomic.Bool
 	var choosingDirectory atomic.Bool
+	exports := &exportManager{handler: handler, choose: func() (string, error) {
+		application.InvokeSync(showMain)
+		return app.Dialog.SaveFile().AttachToWindow(window).SetMessage(tr("导出日志")).SetFilename("readyrig-calls.ndjson").CanCreateDirectories(true).PromptForSingleSelection()
+	}}
+	defer exports.close()
 	// This endpoint only exists in the native webview, never in the public gateway.
 	native := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/window/export" {
+			exports.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == "/api/window/select-directory" {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "no-store")

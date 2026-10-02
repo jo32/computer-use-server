@@ -278,7 +278,86 @@ $('play').onclick=async()=>{
 };
 $('copy-prompt').onclick=()=>copyConnection('prompt');$('copy-address').onclick=()=>copyConnection('address');$('copy-config').onclick=()=>copyConnection('config');
 $('copy-local-config-prompt').onclick=copyLocalConfiguration;
-$('export').onclick=async()=>{try{const res=await fetch(route('/api/export?'+params()));if(!res.ok)throw new Error(t("导出失败"));const url=URL.createObjectURL(await res.blob());const a=document.createElement('a');a.href=url;a.download='readyrig-calls.ndjson';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(t("日志已导出"))}catch(e){toast(e.message)}};
+const nativeExport=!PUBLIC_VIEW&&Boolean(new URLSearchParams(location.search).get('shell'));
+let exportState='idle', exportTimer=null, browserExport=null;
+function renderExport(p){
+ exportState=p.state;
+ const active=['running','paused','cancelling'].includes(p.state);
+ const names={choosing:t("请选择保存位置"),running:t("正在导出日志…"),paused:t("导出已暂停"),cancelling:t("正在取消…"),cancelled:t("导出已取消"),done:t("日志已保存"),error:t("导出失败"),download:t("已交给浏览器下载")};
+ $('export-status').textContent=names[p.state]||'';
+ $('export-progress').max=Math.max(1,p.total||0);
+ if(p.total!=null)$('export-progress').value=p.state==='done'?Math.max(1,p.total):p.completed||0;
+ else $('export-progress').removeAttribute('value');
+ $('export-detail').textContent=p.error||[p.total!=null?t("{0} / {1} 条记录 · {2} MB",{0:p.completed||0,1:p.total,2:((p.bytes||0)/1048576).toFixed(2)}):'',p.path||''].filter(Boolean).join(' · ');
+ $('export-toggle').hidden=!['running','paused'].includes(p.state);
+ $('export-toggle').textContent=p.state==='paused'?t("继续导出"):t("暂停导出");
+ $('export-cancel').hidden=!active;$('export-cancel').disabled=p.state==='cancelling';
+ $('export-close').hidden=active||p.state==='choosing';
+ $('export').disabled=active||p.state==='choosing';
+}
+async function exportRequest(action){
+ const query=action==='start'?params():new URLSearchParams();
+ if(action)query.set('action',action);
+ const res=await fetch('/api/window/export?'+query,{method:action?'POST':'GET'});
+ if(!res.ok)throw new Error(t("导出失败"));
+ return res.json();
+}
+async function pollExport(){
+ try{const p=await exportRequest();renderExport(p);if(['running','paused','cancelling'].includes(p.state))exportTimer=setTimeout(pollExport,250)}
+ catch(e){$('export-detail').textContent=t("无法获取导出进度，正在重试…");exportTimer=setTimeout(pollExport,1000)}
+}
+async function exportInBrowser(){
+ if(!window.showSaveFilePicker){
+  const a=document.createElement('a');a.href=route('/api/export?'+params());a.download='readyrig-calls.ndjson';document.body.append(a);a.click();a.remove();
+  renderExport({state:'download',error:t("请在浏览器下载列表中查看进度和保存位置。")});return;
+ }
+ let writable,reader;
+ const job={paused:false,cancelled:false,wake:null,controller:new AbortController()};browserExport=job;
+ try{
+  const handle=await window.showSaveFilePicker({suggestedName:'readyrig-calls.ndjson'});
+  if(job.cancelled)return;
+  writable=await handle.createWritable();
+  job.progress=()=>({state:job.paused?'paused':'running',path:handle.name});
+  renderExport(job.progress());
+  const res=await fetch(route('/api/export?'+params()),{signal:job.controller.signal});
+  if(!res.ok)throw new Error(t("导出失败"));
+  const total=Number(res.headers.get('X-Export-Total'));let completed=0,bytes=0;
+  reader=res.body.getReader();
+  job.progress=()=>({state:job.paused?'paused':'running',total,completed,bytes,path:handle.name});
+  while(true){
+   if(job.paused)await new Promise(resolve=>job.wake=resolve);
+   if(job.cancelled)throw new DOMException('Cancelled','AbortError');
+   const {done,value}=await reader.read();if(done)break;
+   if(job.paused)await new Promise(resolve=>job.wake=resolve);
+   if(job.cancelled)throw new DOMException('Cancelled','AbortError');
+   await writable.write(value);
+   if(job.cancelled)throw new DOMException('Cancelled','AbortError');
+   bytes+=value.length;
+   for(const byte of value)if(byte===10)completed++;
+   renderExport(job.progress());
+  }
+  if(job.cancelled)throw new DOMException('Cancelled','AbortError');
+  if(completed!==total)throw new Error(t("导出不完整，请重试"));
+  await writable.close();writable=null;renderExport({state:'done',total,completed,bytes,path:handle.name});
+ }catch(e){if(writable)await writable.abort().catch(()=>{});renderExport({state:e.name==='AbortError'?'cancelled':'error',error:e.name==='AbortError'?'':e.message})}
+ finally{if(reader)await reader.cancel().catch(()=>{});browserExport=null}
+}
+$('export').onclick=async()=>{
+ clearTimeout(exportTimer);$('export-dialog').showModal();renderExport({state:'choosing'});
+ try{if(nativeExport){renderExport(await exportRequest('start'));if(['running','paused'].includes(exportState))void pollExport()}else await exportInBrowser()}
+ catch(e){renderExport({state:'error',error:e.message})}
+};
+$('export-toggle').onclick=async()=>{
+ if(nativeExport){try{renderExport(await exportRequest(exportState==='paused'?'resume':'pause'))}catch(e){toast(e.message)}}
+ else if(browserExport){browserExport.paused=!browserExport.paused;if(!browserExport.paused)browserExport.wake?.();renderExport(browserExport.progress())}
+};
+$('export-cancel').onclick=async()=>{
+ if(nativeExport){try{renderExport(await exportRequest('cancel'))}catch(e){toast(e.message)}}
+ else if(browserExport){browserExport.cancelled=true;browserExport.paused=false;browserExport.controller.abort();browserExport.wake?.();renderExport({state:'cancelling'})}
+};
+$('export-close').onclick=()=>$('export-dialog').close();
+$('export-dialog').addEventListener('cancel',event=>{if(['choosing','running','paused','cancelling'].includes(exportState))event.preventDefault()});
+if(nativeExport)exportRequest().then(p=>{if(['running','paused','cancelling'].includes(p.state)){$('export-dialog').showModal();renderExport(p);void pollExport()}}).catch(()=>{});
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showPage('activity');$('search').focus()}if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='j'){e.preventDefault();theme()}});
 async function connect(){try{const key=new URLSearchParams(location.hash.slice(1)).get('key');if(key&&!PUBLIC_VIEW){await api('/api/login',{key});history.replaceState(null,'',location.pathname+location.search)}await refresh();if(state.connected&&!eventStream&&!PUBLIC_VIEW){eventStream=new EventSource(route('/api/events'));eventStream.onmessage=()=>refresh();eventStream.onerror=()=>{$('live').classList.add('off')}}}catch(e){error(e.message)}}
 window.addEventListener('hashchange',connect);

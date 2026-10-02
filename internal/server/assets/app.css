@@ -141,3 +141,8 @@ html[lang="en"] .seg .nav { padding-inline: 10px; }
 .permission-row{align-items:center;gap:12px;min-height:28px}
 .permission-action{padding:5px 8px;border-radius:5px;background:var(--red-soft);transition:background .15s}
 .permission-action:hover{background:var(--pill);text-decoration:underline;text-underline-offset:3px}
+
+#export-dialog{width:min(520px,90vw)}
+#export-progress{width:100%;height:10px;accent-color:var(--accent)}
+#export-detail{overflow-wrap:anywhere}
+#export-dialog [hidden]{display:none}

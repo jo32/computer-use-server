@@ -338,3 +338,23 @@ func TestDashboardCookiesDoNotClobberOtherPorts(t *testing.T) {
 		}
 	}
 }
+
+func TestExportStreamsAllMatchingFullRecords(t *testing.T) {
+	s := fixture(t)
+	for i := 0; i < 503; i++ {
+		category := "terminal"
+		if i == 502 {
+			category = "files"
+		}
+		if err := s.Store.Save(store.Call{ID: fmt.Sprint(i), Category: category, Started: time.Now(), Arguments: json.RawMessage(`{"content":"input"}`), Result: json.RawMessage(`{"text":"output"}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := request(s.UI(), "GET", "/api/export?category=terminal&limit=40&offset=40&view=summary", "", "")
+	if w.Code != 200 || w.Header().Get("X-Export-Total") != "502" {
+		t.Fatalf("status=%d header=%v", w.Code, w.Header())
+	}
+	if bytes.Count(w.Body.Bytes(), []byte("\n")) != 502 || strings.Count(w.Body.String(), `"content":"input"`) != 502 || strings.Count(w.Body.String(), `"text":"output"`) != 502 {
+		t.Fatal("incomplete export")
+	}
+}
