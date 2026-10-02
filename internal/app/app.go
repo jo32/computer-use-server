@@ -74,6 +74,8 @@ func New(workspace, dataDir string) (*App, error) {
 	uiKey := harness.ID() + harness.ID()
 	registry := harness.New(s, accessPath, uiKey)
 	registry.RegisterHelp()
+	// Advanced tools are callable through use_tool; this lists them in tools/list too.
+	registry.ExposeAll = os.Getenv("READYRIG_EXPOSE_ALL_TOOLS") == "1"
 	files, err := harness.NewFiles(workspace)
 	if err != nil {
 		s.Close()
@@ -86,9 +88,12 @@ func New(workspace, dataDir string) (*App, error) {
 		return nil, err
 	}
 	files.Projects = projects
+	spillDir := filepath.Join(dataDir, "spill")
+	files.SpillDir = spillDir
 	projects.Register(registry)
 	processes := harness.NewProcesses(workspace)
 	processes.Projects = projects
+	processes.SpillDir = spillDir
 	c := computer.New(filepath.Join(dataDir, "screenshots"))
 	files.Register(registry)
 	processes.Register(registry)

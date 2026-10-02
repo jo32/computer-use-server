@@ -5,17 +5,28 @@ import (
 	"computer-use-server/internal/harness"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"golang.org/x/image/draw"
+	"hash/fnv"
 	"image"
 	"image/jpeg"
 	_ "image/png"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	frameLifetime = 5 * time.Minute
+	maxEdge       = 1280
+	maxBatch      = 25
+	maxTextBytes  = 10000
+	maxClipboard  = 1 << 20
+	defaultSettle = 1000
 )
 
 type Permissions struct {
@@ -24,45 +35,231 @@ type Permissions struct {
 	Accessibility bool   `json:"accessibility"`
 	Platform      string `json:"platform"`
 }
-type Bounds struct{ Width, Height float64 }
+
+// Bounds is a display's rectangle in points; X and Y locate it in the global
+// coordinate space shared by all displays.
+type Bounds struct{ X, Y, Width, Height float64 }
+
+// Action is one input step. Coordinates arrive in screenshot pixels and are
+// converted to global display points before reaching the Driver.
 type Action struct {
-	Action       string    `json:"action"`
-	Coordinate   []float64 `json:"coordinate,omitempty"`
-	To           []float64 `json:"to,omitempty"`
-	Text         string    `json:"text,omitempty"`
-	Keys         []string  `json:"keys,omitempty"`
-	Scroll       []int     `json:"scroll_delta,omitempty"`
-	CaptureAfter *bool     `json:"capture_after,omitempty"`
-	FrameID      string    `json:"frame_id,omitempty"`
+	Action     string    `json:"action,omitempty"`
+	Coordinate []float64 `json:"coordinate,omitempty"`
+	To         []float64 `json:"to,omitempty"`
+	Text       string    `json:"text,omitempty"`
+	Keys       []string  `json:"keys,omitempty"`
+	Scroll     []int     `json:"scroll_delta,omitempty"`
+	Modifiers  []string  `json:"modifiers,omitempty"`
+	DurationMS int       `json:"duration_ms,omitempty"`
+	Element    string    `json:"element,omitempty"`
+	FrameID    string    `json:"frame_id,omitempty"`
+	// Flags holds the modifier bits resolved from Modifiers.
+	Flags uint64 `json:"-"`
 }
+
+// Window is an on-screen window.
+type Window struct {
+	PID       int     `json:"pid"`
+	App       string  `json:"app"`
+	Title     string  `json:"title"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	Width     float64 `json:"width"`
+	Height    float64 `json:"height"`
+	Layer     int     `json:"layer"`
+	Frontmost bool    `json:"frontmost,omitempty"`
+}
+
+// UINode is one accessibility element; positions are global display points.
+type UINode struct {
+	Ref         string  `json:"ref"`
+	Depth       int     `json:"depth"`
+	Role        string  `json:"role"`
+	Title       string  `json:"title,omitempty"`
+	Description string  `json:"description,omitempty"`
+	Value       string  `json:"value,omitempty"`
+	X           float64 `json:"x"`
+	Y           float64 `json:"y"`
+	Width       float64 `json:"width"`
+	Height      float64 `json:"height"`
+}
+
+// UITree is the accessibility outline of one application.
+type UITree struct {
+	App       string
+	PID       int
+	Nodes     []UINode
+	Truncated bool
+}
+
 type Driver interface {
 	Permissions() Permissions
-	Capture(context.Context) ([]byte, Bounds, error)
+	Displays() []Bounds
+	// Capture returns a PNG of display (1-based) at native resolution.
+	Capture(ctx context.Context, display int) ([]byte, Bounds, error)
 	Input(context.Context, Action) error
+	// Clipboard returns the current text and, when set is non-nil, replaces it.
+	Clipboard(ctx context.Context, set *string) (string, error)
+	Windows(context.Context) ([]Window, error)
+	UITree(ctx context.Context, app string, maxNodes, maxDepth int) (UITree, error)
+	OpenApp(ctx context.Context, name string) error
 }
+
+// frame remembers what a screenshot covered so pixel coordinates in it can be
+// mapped back to the screen, including zoomed regions of a display.
 type frame struct {
 	Width, Height int
-	Bounds        Bounds
+	Origin, Span  [2]float64
+	Display       int
 	At            time.Time
 	Session       string
 }
+type treeState struct {
+	nodes []UINode
+	at    time.Time
+}
 type Computer struct {
-	driver Driver
-	dir    string
-	mu     sync.Mutex
-	frames map[string]frame
+	driver   Driver
+	dir      string
+	mu       sync.Mutex
+	frames   map[string]frame
+	trees    map[string]treeState
+	interval time.Duration
 }
 
 func New(dir string) *Computer {
-	return &Computer{driver: nativeDriver{}, dir: dir, frames: map[string]frame{}}
+	return &Computer{driver: nativeDriver{}, dir: dir, frames: map[string]frame{}, trees: map[string]treeState{}}
 }
 func (c *Computer) Permissions() Permissions { return c.driver.Permissions() }
-func (c *Computer) Register(r *harness.Registry) {
-	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_screenshot", Category: "computer", Description: "Capture the primary display as a JPEG, scaled to at most 1280 pixels. Returns a frame_id and image dimensions. Use coordinates from this frame in computer_action. Requires macOS Screen Recording permission.", InputSchema: harness.Schema(map[string]any{})}, Run: func(ctx context.Context, in harness.Invocation) (harness.Output, error) { return c.capture(ctx, in) }})
-	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_action", Category: "computer", Mutating: true, Description: "Act on the primary display. Actions: mouse_move, left_click, right_click, middle_click, double_click, drag, scroll, type, key. Coordinate actions require a frame_id from a screenshot in this session within 5 minutes. Coordinates are image pixels, mapped to macOS display points. Defaults to capture_after=true. Mouse in a display corner stops input. Actions execute sequentially.", InputSchema: harness.Schema(map[string]any{"action": harness.Prop("string", "Action name"), "coordinate": map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "minItems": 2, "maxItems": 2, "description": "[x,y] in screenshot pixels"}, "to": map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "minItems": 2, "maxItems": 2}, "frame_id": harness.Prop("string", "Screenshot frame ID"), "text": harness.Prop("string", "Unicode text for type"), "keys": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "scroll_delta": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "minItems": 2, "maxItems": 2, "description": "[horizontal,vertical] wheel pixels"}, "capture_after": harness.Prop("boolean", "Capture result after settling, default true")}, "action")}, Run: c.action})
+func (c *Computer) settleInterval() time.Duration {
+	if c.interval > 0 {
+		return c.interval
+	}
+	return 150 * time.Millisecond
 }
-func (c *Computer) capture(ctx context.Context, in harness.Invocation) (harness.Output, error) {
-	raw, bounds, err := c.driver.Capture(ctx)
+
+var pair = func(description string) map[string]any {
+	return map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "minItems": 2, "maxItems": 2, "description": description}
+}
+var actionNames = []string{"mouse_move", "left_click", "right_click", "middle_click", "double_click", "triple_click", "drag", "scroll", "type", "paste", "key", "wait"}
+
+func stepProps() map[string]any {
+	return map[string]any{
+		"action":       map[string]any{"type": "string", "description": "What to do", "enum": actionNames},
+		"coordinate":   pair("[x,y] in the pixels of the screenshot named by frame_id"),
+		"to":           pair("Drag destination [x,y] in screenshot pixels"),
+		"element":      harness.Prop("string", "Element ref (e12) from computer_ui_tree to target instead of a coordinate"),
+		"text":         harness.Prop("string", "Text for type (typed as keystrokes) or paste (through the clipboard, best for long or non-ASCII text)"),
+		"keys":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "maxItems": 5, "description": "One chord: any modifiers (cmd, ctrl, alt, shift) plus exactly one key, e.g. [\"cmd\",\"shift\",\"4\"], [\"enter\"], [\"escape\"]"},
+		"scroll_delta": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "minItems": 2, "maxItems": 2, "description": "[horizontal,vertical] wheel pixels; scrolls where the pointer is, or at coordinate/element if given"},
+		"modifiers":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Keys held during a click, drag or scroll: cmd, ctrl, alt, shift"},
+		"duration_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 10000, "description": "Pause length for wait"},
+		"frame_id":     harness.Prop("string", "Screenshot frame ID the coordinates refer to"),
+	}
+}
+func (c *Computer) Register(r *harness.Registry) {
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_screenshot", Category: "computer", Description: "Capture a display as a JPEG scaled to at most 1280 pixels. Returns a frame_id; coordinates in this image are what computer_action expects. To read small text or aim precisely, pass region=[x1,y1,x2,y2] (pixels of an earlier frame_id) to get that area at full resolution as a new frame. display selects a monitor (1 is the main one). Requires macOS Screen Recording permission.", InputSchema: harness.Schema(map[string]any{"display": map[string]any{"type": "integer", "minimum": 1, "maximum": 16, "description": "Monitor number, default 1 (main)"}, "region": map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "minItems": 4, "maxItems": 4, "description": "[x1,y1,x2,y2] area to zoom into, in pixels of frame_id"}, "frame_id": harness.Prop("string", "Earlier screenshot that region refers to")})}, Run: c.screenshot})
+	step := stepProps()
+	props := map[string]any{"actions": map[string]any{"type": "array", "items": map[string]any{"type": "object"}, "minItems": 1, "maxItems": maxBatch, "description": "Several steps run in order in one call (same fields as a single action); only one screenshot is taken at the end. Use it to chain click, type, key without a round trip each."}, "capture_after": harness.Prop("boolean", "Return a screenshot after the action(s), default true"), "settle_ms": map[string]any{"type": "integer", "minimum": 0, "maximum": 5000, "description": "Longest wait for the screen to stop changing before that screenshot, default 1000; 0 captures after a fixed 200 ms"}}
+	for k, v := range step {
+		props[k] = v
+	}
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_action", Category: "computer", Mutating: true, Description: "Act on the screen: mouse_move, left_click, right_click, middle_click, double_click, triple_click, drag, scroll, type, paste, key, wait. Pass one action, or actions[] to chain steps in a single call. Coordinates are pixels of a screenshot (frame_id, from this session within 5 minutes) or element refs from computer_ui_tree, which are more reliable than pixels. Coordinates in a zoomed region screenshot work too. Holds modifiers during clicks and scrolls. Returns a screenshot taken once the screen has settled. Moving the pointer into a display corner stops input.", InputSchema: harness.Schema(props)}, Run: c.action})
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_ui_tree", Category: "computer", Description: "List the accessibility elements (buttons, fields, menus, text) of an application with refs such as e12. Pass a ref as element to computer_action to click it without guessing pixels. Defaults to the frontmost app; app matches a window owner name. Requires macOS Accessibility permission. Refs are valid for 5 minutes in this session; list again after the UI changes.", InputSchema: harness.Schema(map[string]any{"app": harness.Prop("string", "Application name (substring), default frontmost"), "max_nodes": map[string]any{"type": "integer", "minimum": 1, "maximum": 800, "description": "Element limit, default 250"}, "depth": map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Nesting limit, default 10"}})}, Run: c.uiTree})
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_app", Category: "computer", Mutating: true, Description: "windows lists visible windows (app, title, position, size, frontmost). open and focus launch an application or bring it to the front by name, e.g. Safari or \"Visual Studio Code\".", InputSchema: harness.Schema(map[string]any{"action": map[string]any{"type": "string", "enum": []string{"windows", "open", "focus"}, "description": "What to do"}, "app": harness.Prop("string", "Application name for open and focus")}, "action")}, Run: c.app})
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_clipboard", Category: "computer", Mutating: true, Description: "Read (get) or replace (set) the clipboard text. To insert long or non-ASCII text into the focused field, computer_action paste is usually simpler. Clipboard contents are recorded in the activity log.", InputSchema: harness.Schema(map[string]any{"action": map[string]any{"type": "string", "enum": []string{"get", "set"}, "description": "get or set"}, "text": harness.Prop("string", "Text to place on the clipboard (set)")}, "action")}, Run: c.clipboard})
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// grab captures a display; with settle it repeats until two captures are identical
+// (the screen stopped changing) or settle has elapsed.
+func (c *Computer) grab(ctx context.Context, display int, settle time.Duration) ([]byte, Bounds, error) {
+	if settle <= 0 {
+		return c.driver.Capture(ctx, display)
+	}
+	deadline := time.Now().Add(settle)
+	var prev uint64
+	first := true
+	for {
+		if err := sleep(ctx, c.settleInterval()); err != nil {
+			return nil, Bounds{}, err
+		}
+		raw, bounds, err := c.driver.Capture(ctx, display)
+		if err != nil {
+			return nil, Bounds{}, err
+		}
+		h := fnv.New64a()
+		h.Write(raw)
+		sum := h.Sum64()
+		if !first && sum == prev || time.Now().After(deadline) {
+			return raw, bounds, nil
+		}
+		prev, first = sum, false
+	}
+}
+
+type captureOptions struct {
+	Display int
+	Region  []float64
+	FrameID string
+	Settle  time.Duration
+}
+
+func (c *Computer) lookup(session, id string) (frame, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	f, ok := c.frames[id]
+	if !ok || f.Session != session || time.Since(f.At) > frameLifetime {
+		return frame{}, errors.New("take a fresh screenshot in this session before coordinate actions")
+	}
+	return f, nil
+}
+func (c *Computer) screenshot(ctx context.Context, in harness.Invocation) (harness.Output, error) {
+	var a struct {
+		Display int       `json:"display"`
+		Region  []float64 `json:"region"`
+		FrameID string    `json:"frame_id"`
+	}
+	if err := harness.Decode(in.Arguments, &a); err != nil {
+		return harness.Output{}, err
+	}
+	if len(a.Region) > 0 && a.FrameID == "" {
+		return harness.Output{}, errors.New("region needs the frame_id it refers to")
+	}
+	if len(a.Region) == 0 && a.FrameID != "" {
+		return harness.Output{}, errors.New("frame_id is only used with region")
+	}
+	return c.capture(ctx, in, captureOptions{Display: a.Display, Region: a.Region, FrameID: a.FrameID})
+}
+func (c *Computer) capture(ctx context.Context, in harness.Invocation, o captureOptions) (harness.Output, error) {
+	display := o.Display
+	var parent frame
+	zoom := len(o.Region) > 0
+	if zoom {
+		var err error
+		if parent, err = c.lookup(in.Session, o.FrameID); err != nil {
+			return harness.Output{}, err
+		}
+		r := o.Region
+		if len(r) != 4 || r[0] < 0 || r[1] < 0 || r[2] <= r[0] || r[3] <= r[1] || r[2] > float64(parent.Width) || r[3] > float64(parent.Height) {
+			return harness.Output{}, errors.New("region must be [x1,y1,x2,y2] inside the frame")
+		}
+		display = parent.Display
+	}
+	if display == 0 {
+		display = 1
+	}
+	raw, bounds, err := c.grab(ctx, display, o.Settle)
 	if err != nil {
 		return harness.Output{}, err
 	}
@@ -71,16 +268,30 @@ func (c *Computer) capture(ctx context.Context, in harness.Invocation) (harness.
 		return harness.Output{}, err
 	}
 	w, h := src.Bounds().Dx(), src.Bounds().Dy()
-	if w == 0 || h == 0 {
+	if w == 0 || h == 0 || bounds.Width <= 0 || bounds.Height <= 0 {
 		return harness.Output{}, errors.New("empty capture")
 	}
-	if max(w, h) > 1280 {
-		scale := 1280 / float64(max(w, h))
-		w = max(1, int(float64(w)*scale))
-		h = max(1, int(float64(h)*scale))
+	origin := [2]float64{bounds.X, bounds.Y}
+	span := [2]float64{bounds.Width, bounds.Height}
+	crop := src.Bounds()
+	if zoom {
+		r := o.Region
+		kx, ky := parent.Span[0]/float64(parent.Width), parent.Span[1]/float64(parent.Height)
+		origin = [2]float64{parent.Origin[0] + r[0]*kx, parent.Origin[1] + r[1]*ky}
+		span = [2]float64{(r[2] - r[0]) * kx, (r[3] - r[1]) * ky}
+		sx, sy := float64(w)/bounds.Width, float64(h)/bounds.Height
+		crop = image.Rect(int(math.Floor((origin[0]-bounds.X)*sx)), int(math.Floor((origin[1]-bounds.Y)*sy)), int(math.Ceil((origin[0]+span[0]-bounds.X)*sx)), int(math.Ceil((origin[1]+span[1]-bounds.Y)*sy))).Intersect(src.Bounds())
+		if crop.Empty() {
+			return harness.Output{}, errors.New("region is outside the display")
+		}
 	}
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+	ow, oh := crop.Dx(), crop.Dy()
+	if max(ow, oh) > maxEdge {
+		scale := float64(maxEdge) / float64(max(ow, oh))
+		ow, oh = max(1, int(float64(ow)*scale)), max(1, int(float64(oh)*scale))
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, ow, oh))
+	draw.CatmullRom.Scale(dst, dst.Bounds(), src, crop, draw.Over, nil)
 	var buf bytes.Buffer
 	if err = jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 80}); err != nil {
 		return harness.Output{}, err
@@ -95,71 +306,331 @@ func (c *Computer) capture(ctx context.Context, in harness.Invocation) (harness.
 	}
 	c.mu.Lock()
 	for key, f := range c.frames {
-		if time.Since(f.At) > 5*time.Minute {
+		if time.Since(f.At) > frameLifetime {
 			delete(c.frames, key)
 		}
 	}
-	c.frames[id] = frame{w, h, bounds, time.Now(), in.Session}
+	c.frames[id] = frame{Width: ow, Height: oh, Origin: origin, Span: span, Display: display, At: time.Now(), Session: in.Session}
 	c.mu.Unlock()
-	return harness.Output{Screenshot: filename, Value: map[string]any{"status": "success", "frame_id": id, "image_size": []int{w, h}, "screen_size": []float64{bounds.Width, bounds.Height}, "screenshot": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())}}, nil
+	value := map[string]any{"status": "success", "frame_id": id, "image_size": []int{ow, oh}, "screen_size": []float64{bounds.Width, bounds.Height}, "display": display, "displays": len(c.driver.Displays()), "screenshot": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())}
+	if zoom {
+		value["zoomed"] = true
+	}
+	return harness.Output{Screenshot: filename, Value: value}, nil
 }
-func (c *Computer) action(ctx context.Context, in harness.Invocation) (harness.Output, error) {
-	var a Action
-	if err := json.Unmarshal(in.Arguments, &a); err != nil {
-		return harness.Output{}, err
+
+var modifierBits = map[string]uint64{"cmd": 1 << 20, "command": 1 << 20, "meta": 1 << 20, "super": 1 << 20, "ctrl": 1 << 18, "control": 1 << 18, "alt": 1 << 19, "option": 1 << 19, "shift": 1 << 17}
+
+func modifierFlags(names []string) (uint64, error) {
+	var flags uint64
+	for _, n := range names {
+		bit, ok := modifierBits[strings.ToLower(n)]
+		if !ok {
+			return 0, fmt.Errorf("unknown modifier %q (use cmd, ctrl, alt, shift)", n)
+		}
+		flags |= bit
+	}
+	return flags, nil
+}
+
+// toPoint maps a pixel of frame f to global display points.
+func toPoint(f frame, p []float64) ([]float64, error) {
+	if len(p) != 2 || p[0] < 0 || p[1] < 0 || p[0] >= float64(f.Width) || p[1] >= float64(f.Height) {
+		return nil, errors.New("coordinate outside screenshot")
+	}
+	return []float64{f.Origin[0] + p[0]*f.Span[0]/float64(f.Width), f.Origin[1] + p[1]*f.Span[1]/float64(f.Height)}, nil
+}
+func (c *Computer) elementPoint(session, ref string) ([]float64, error) {
+	c.mu.Lock()
+	st, ok := c.trees[session]
+	c.mu.Unlock()
+	if !ok || time.Since(st.at) > frameLifetime {
+		return nil, errors.New("no recent computer_ui_tree in this session; list the elements first")
+	}
+	for _, n := range st.nodes {
+		if n.Ref == ref {
+			if n.Width <= 0 || n.Height <= 0 {
+				return nil, fmt.Errorf("element %s has no on-screen position", ref)
+			}
+			return []float64{n.X + n.Width/2, n.Y + n.Height/2}, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown element %q; list the elements again", ref)
+}
+
+// prepare validates one step and resolves its targets to global display points.
+func (c *Computer) prepare(a Action, session, defaultFrame string) (Action, error) {
+	if a.FrameID == "" {
+		a.FrameID = defaultFrame
+	}
+	var err error
+	if a.Flags, err = modifierFlags(a.Modifiers); err != nil {
+		return a, err
+	}
+	target := func(optional bool) error {
+		switch {
+		case a.Element != "":
+			a.Coordinate, err = c.elementPoint(session, a.Element)
+			return err
+		case len(a.Coordinate) == 0 && optional:
+			return nil
+		}
+		f, err := c.lookup(session, a.FrameID)
+		if err != nil {
+			return err
+		}
+		a.Coordinate, err = toPoint(f, a.Coordinate)
+		return err
 	}
 	switch a.Action {
-	case "mouse_move", "left_click", "right_click", "middle_click", "double_click", "drag":
-		c.mu.Lock()
-		f, ok := c.frames[a.FrameID]
-		c.mu.Unlock()
-		if !ok || f.Session != in.Session || time.Since(f.At) > 5*time.Minute {
-			return harness.Output{}, errors.New("take a fresh screenshot in this session before coordinate actions")
+	case "mouse_move", "left_click", "right_click", "middle_click", "double_click", "triple_click":
+		if err = target(false); err != nil {
+			return a, err
 		}
-		convert := func(point []float64) ([]float64, error) {
-			if len(point) != 2 || point[0] < 0 || point[1] < 0 || point[0] >= float64(f.Width) || point[1] >= float64(f.Height) {
-				return nil, errors.New("coordinate outside screenshot")
-			}
-			return []float64{point[0] * f.Bounds.Width / float64(f.Width), point[1] * f.Bounds.Height / float64(f.Height)}, nil
+	case "drag":
+		if err = target(false); err != nil {
+			return a, err
 		}
-		var err error
-		a.Coordinate, err = convert(a.Coordinate)
-		if err != nil {
-			return harness.Output{}, err
+		f, e := c.lookup(session, a.FrameID)
+		if e != nil {
+			return a, e
 		}
-		if a.Action == "drag" {
-			a.To, err = convert(a.To)
-			if err != nil {
-				return harness.Output{}, err
-			}
-		}
-	case "type":
-		if a.Text == "" || len(a.Text) > 10000 {
-			return harness.Output{}, errors.New("type requires 1–10000 bytes of text")
-		}
-	case "key":
-		if len(a.Keys) < 1 || len(a.Keys) > 5 {
-			return harness.Output{}, errors.New("key requires 1–5 keys")
+		if a.To, err = toPoint(f, a.To); err != nil {
+			return a, err
 		}
 	case "scroll":
 		if len(a.Scroll) != 2 || a.Scroll[0] < -10000 || a.Scroll[0] > 10000 || a.Scroll[1] < -10000 || a.Scroll[1] > 10000 {
-			return harness.Output{}, errors.New("scroll_delta must contain two values between -10000 and 10000")
+			return a, errors.New("scroll_delta must contain two values between -10000 and 10000")
 		}
+		if err = target(true); err != nil {
+			return a, err
+		}
+	case "type", "paste":
+		if a.Text == "" || len(a.Text) > maxTextBytes {
+			return a, fmt.Errorf("%s requires 1-%d bytes of text", a.Action, maxTextBytes)
+		}
+	case "key":
+		if len(a.Keys) < 1 || len(a.Keys) > 5 {
+			return a, errors.New("key requires 1-5 keys")
+		}
+	case "wait":
+		if a.DurationMS < 1 || a.DurationMS > 10000 {
+			return a, errors.New("wait requires duration_ms between 1 and 10000")
+		}
+	case "":
+		return a, errors.New("action is required")
 	default:
-		return harness.Output{}, fmt.Errorf("unknown action %q", a.Action)
+		return a, fmt.Errorf("unknown action %q", a.Action)
 	}
-	if err := c.driver.Input(ctx, a); err != nil {
+	return a, nil
+}
+
+// run performs one prepared step.
+func (c *Computer) run(ctx context.Context, a Action) error {
+	switch a.Action {
+	case "wait":
+		return sleep(ctx, time.Duration(a.DurationMS)*time.Millisecond)
+	case "paste":
+		// Borrow the clipboard and put the user's text back afterwards.
+		previous, readErr := c.driver.Clipboard(ctx, nil)
+		if _, err := c.driver.Clipboard(ctx, &a.Text); err != nil {
+			return err
+		}
+		err := c.driver.Input(ctx, Action{Action: "key", Keys: []string{"cmd", "v"}})
+		if err == nil {
+			err = sleep(ctx, 250*time.Millisecond)
+		}
+		if readErr == nil {
+			c.driver.Clipboard(context.WithoutCancel(ctx), &previous)
+		}
+		return err
+	}
+	return c.driver.Input(ctx, a)
+}
+
+type request struct {
+	Action
+	Actions      []Action `json:"actions"`
+	CaptureAfter *bool    `json:"capture_after"`
+	SettleMS     *int     `json:"settle_ms"`
+}
+
+func (c *Computer) action(ctx context.Context, in harness.Invocation) (harness.Output, error) {
+	var req request
+	if err := harness.Decode(in.Arguments, &req); err != nil {
 		return harness.Output{}, err
 	}
-	timer := time.NewTimer(200 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-	case <-ctx.Done():
-		return harness.Output{}, ctx.Err()
+	steps := req.Actions
+	switch {
+	case req.Action.Action != "" && len(steps) > 0:
+		return harness.Output{}, errors.New("use either action or actions, not both")
+	case req.Action.Action != "":
+		steps = []Action{req.Action}
+	case len(steps) == 0:
+		return harness.Output{}, errors.New("action or actions is required")
+	case len(steps) > maxBatch:
+		return harness.Output{}, fmt.Errorf("at most %d actions per call", maxBatch)
 	}
-	if a.CaptureAfter == nil || *a.CaptureAfter {
-		return c.capture(ctx, in)
+	// Validate every step before touching the machine, so a typo in step 5 cannot
+	// leave steps 1-4 half done.
+	prepared := make([]Action, len(steps))
+	for i, s := range steps {
+		p, err := c.prepare(s, in.Session, req.Action.FrameID)
+		if err != nil {
+			if len(steps) > 1 {
+				err = fmt.Errorf("step %d: %w", i+1, err)
+			}
+			return harness.Output{}, err
+		}
+		prepared[i] = p
 	}
-	return harness.Output{Value: map[string]any{"status": "success", "action": a.Action}}, nil
+	for i, p := range prepared {
+		if i > 0 {
+			if err := sleep(ctx, 100*time.Millisecond); err != nil {
+				return harness.Output{Value: map[string]any{"status": "error", "completed": i, "steps": len(prepared)}}, err
+			}
+		}
+		if err := c.run(ctx, p); err != nil {
+			return harness.Output{Value: map[string]any{"status": "error", "completed": i, "steps": len(prepared)}}, fmt.Errorf("step %d (%s): %w", i+1, p.Action, err)
+		}
+	}
+	if req.CaptureAfter != nil && !*req.CaptureAfter {
+		return harness.Output{Value: map[string]any{"status": "success", "action": prepared[len(prepared)-1].Action, "steps": len(prepared)}}, nil
+	}
+	settle := defaultSettle
+	if req.SettleMS != nil {
+		settle = *req.SettleMS
+	}
+	if settle == 0 {
+		if err := sleep(ctx, 200*time.Millisecond); err != nil {
+			return harness.Output{}, err
+		}
+	}
+	out, err := c.capture(ctx, in, captureOptions{Settle: time.Duration(settle) * time.Millisecond})
+	if err == nil {
+		out.Value.(map[string]any)["steps"] = len(prepared)
+	}
+	return out, err
+}
+
+func (c *Computer) clipboard(ctx context.Context, in harness.Invocation) (harness.Output, error) {
+	var a struct {
+		Action string  `json:"action"`
+		Text   *string `json:"text"`
+	}
+	if err := harness.Decode(in.Arguments, &a); err != nil {
+		return harness.Output{}, err
+	}
+	switch a.Action {
+	case "get":
+		text, err := c.driver.Clipboard(ctx, nil)
+		if err != nil {
+			return harness.Output{}, err
+		}
+		truncated := len(text) > maxClipboard
+		if truncated {
+			text = text[:maxClipboard]
+		}
+		return harness.Output{Value: map[string]any{"text": text, "length": len(text), "truncated": truncated}, Text: text, TextKeys: []string{"text"}}, nil
+	case "set":
+		if a.Text == nil || len(*a.Text) > maxClipboard {
+			return harness.Output{}, errors.New("set requires text of at most 1 MiB")
+		}
+		if _, err := c.driver.Clipboard(ctx, a.Text); err != nil {
+			return harness.Output{}, err
+		}
+		return harness.Output{Value: map[string]any{"status": "success", "length": len(*a.Text)}}, nil
+	}
+	return harness.Output{}, errors.New("action must be get or set")
+}
+func (c *Computer) app(ctx context.Context, in harness.Invocation) (harness.Output, error) {
+	var a struct {
+		Action string `json:"action"`
+		App    string `json:"app"`
+	}
+	if err := harness.Decode(in.Arguments, &a); err != nil {
+		return harness.Output{}, err
+	}
+	switch a.Action {
+	case "windows":
+		windows, err := c.driver.Windows(ctx)
+		if err != nil {
+			return harness.Output{}, err
+		}
+		var text bytes.Buffer
+		for _, w := range windows {
+			mark := ""
+			if w.Frontmost {
+				mark = " (frontmost)"
+			}
+			title := w.Title
+			if title == "" {
+				title = "(untitled)"
+			}
+			fmt.Fprintf(&text, "%s — %s [%.0f,%.0f %.0fx%.0f]%s\n", w.App, title, w.X, w.Y, w.Width, w.Height, mark)
+		}
+		if text.Len() == 0 {
+			text.WriteString("[no windows]")
+		}
+		return harness.Output{Value: map[string]any{"windows": windows}, Text: text.String(), TextKeys: []string{"windows"}}, nil
+	case "open", "focus":
+		if a.App == "" || len(a.App) > 200 {
+			return harness.Output{}, errors.New("app is required")
+		}
+		if err := c.driver.OpenApp(ctx, a.App); err != nil {
+			return harness.Output{}, err
+		}
+		if err := sleep(ctx, 400*time.Millisecond); err != nil {
+			return harness.Output{}, err
+		}
+		return harness.Output{Value: map[string]any{"status": "success", "app": a.App}}, nil
+	}
+	return harness.Output{}, errors.New("action must be windows, open or focus")
+}
+func (c *Computer) uiTree(ctx context.Context, in harness.Invocation) (harness.Output, error) {
+	var a struct {
+		App      string `json:"app"`
+		MaxNodes int    `json:"max_nodes"`
+		Depth    int    `json:"depth"`
+	}
+	if err := harness.Decode(in.Arguments, &a); err != nil {
+		return harness.Output{}, err
+	}
+	if a.MaxNodes == 0 {
+		a.MaxNodes = 250
+	}
+	if a.Depth == 0 {
+		a.Depth = 10
+	}
+	if a.MaxNodes < 1 || a.MaxNodes > 800 || a.Depth < 1 || a.Depth > 20 {
+		return harness.Output{}, errors.New("max_nodes must be 1-800 and depth 1-20")
+	}
+	tree, err := c.driver.UITree(ctx, a.App, a.MaxNodes, a.Depth)
+	if err != nil {
+		return harness.Output{}, err
+	}
+	var text bytes.Buffer
+	fmt.Fprintf(&text, "app: %s (pid %d), %d elements; pass a ref as element to computer_action\n", tree.App, tree.PID, len(tree.Nodes))
+	for i := range tree.Nodes {
+		n := &tree.Nodes[i]
+		n.Ref = fmt.Sprintf("e%d", i+1)
+		fmt.Fprintf(&text, "%*s%s %s", n.Depth*2, "", n.Ref, n.Role)
+		if n.Title != "" {
+			fmt.Fprintf(&text, " %q", n.Title)
+		}
+		if n.Description != "" && n.Description != n.Title {
+			fmt.Fprintf(&text, " desc=%q", n.Description)
+		}
+		if n.Value != "" {
+			fmt.Fprintf(&text, " value=%q", n.Value)
+		}
+		fmt.Fprintf(&text, " [%.0f,%.0f %.0fx%.0f]\n", n.X, n.Y, n.Width, n.Height)
+	}
+	if tree.Truncated {
+		text.WriteString("[element limit reached; raise max_nodes or target a narrower app]\n")
+	}
+	c.mu.Lock()
+	c.trees[in.Session] = treeState{nodes: tree.Nodes, at: time.Now()}
+	c.mu.Unlock()
+	return harness.Output{Value: map[string]any{"app": tree.App, "pid": tree.PID, "nodes": tree.Nodes, "truncated": tree.Truncated}, Text: text.String(), TextKeys: []string{"nodes"}}, nil
 }

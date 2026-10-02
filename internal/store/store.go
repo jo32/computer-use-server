@@ -96,7 +96,7 @@ func (s *Store) List(f Filter) ([]Call, int, error) {
 	projection := "*"
 	if f.Lightweight {
 		projection = `id,session,client,tool,category,status,started,duration,
-  json_remove(arguments,'$.content','$.env','$.text'),
+  json_remove(arguments,'$.content','$.env','$.text','$.old_string','$.new_string'),
   json_object('running',json_extract(result,'$.running'),'exit_code',json_extract(result,'$.exit_code'),'frame_id',json_extract(result,'$.frame_id'),'image_size',json_extract(result,'$.image_size')),error,screenshot`
 	}
 	rows, err := s.db.Query("SELECT "+projection+" FROM calls WHERE "+clause+" ORDER BY started DESC,rowid DESC LIMIT ? OFFSET ?", append(args, f.Limit, f.Offset)...)

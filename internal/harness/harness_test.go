@@ -149,18 +149,42 @@ func TestTimeoutAndEmergencyStop(t *testing.T) {
 		t.Fatal("emergency stop did not cancel process group")
 	}
 }
-func TestOutputBound(t *testing.T) {
-	b := &limitedBuffer{}
-	payload := []byte(strings.Repeat("x", MaxFileBytes+10))
-	n, err := b.Write(payload)
+func TestOutputKeepsHeadAndTailAndSpills(t *testing.T) {
+	dir := t.TempDir()
+	b := newStreamBuf(dir, "0123456789abcdef01234567.stdout")
+	defer b.Close()
+	b.Write([]byte("START-"))
+	b.Write([]byte(strings.Repeat("x", 200*1024)))
+	b.Write([]byte("-END"))
 	text, cut := b.Drain()
-	if err != nil || n != len(payload) || len(text) != MaxFileBytes || !cut {
-		t.Fatal("output cap broken")
+	if !cut || len(text) > responseCap+100 || !strings.HasPrefix(text, "START-") || !strings.HasSuffix(text, "-END") || !strings.Contains(text, "bytes omitted") {
+		t.Fatalf("head/tail broken: cut=%v len=%d", cut, len(text))
 	}
-	b.Write([]byte("more"))
-	text, _ = b.Drain()
-	if text != "" {
-		t.Fatal("total cap resets after poll")
+	if b.path() != "spill:0123456789abcdef01234567.stdout" {
+		t.Fatal("missing spill path", b.path())
+	}
+	b.Close()
+	saved, err := os.ReadFile(filepath.Join(dir, "0123456789abcdef01234567.stdout"))
+	if err != nil || len(saved) != 6+200*1024+4 || !strings.HasPrefix(string(saved), "START-") {
+		t.Fatalf("spill incomplete: %d %v", len(saved), err)
+	}
+	if text, _ = b.Drain(); text != "" {
+		t.Fatal("drain repeated output")
+	}
+	snap, _ := b.Snapshot()
+	if !strings.HasPrefix(snap, "START-") || !strings.HasSuffix(snap, "-END") {
+		t.Fatal("snapshot lost an end")
+	}
+}
+func TestSmallOutputIsNotSpilled(t *testing.T) {
+	dir := t.TempDir()
+	b := newStreamBuf(dir, "0123456789abcdef01234567.stdout")
+	b.Write([]byte("hello"))
+	if text, cut := b.Drain(); text != "hello" || cut || b.path() != "" {
+		t.Fatal(text, cut, b.path())
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatal("small output created a file")
 	}
 }
 func TestQueuedToolCancelledBeforeExecution(t *testing.T) {

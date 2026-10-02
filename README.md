@@ -161,8 +161,10 @@ Add local folders on the **Projects** page. You can browse folders, rename proje
 
 The desktop and local browser console share `POST /api/files/open`, accepting `project`, `path` and an optional `application` ID from `GET /api/files/applications?project=…&path=…`. These reusable endpoints support existing files and folders within the same project/Full Access boundaries as file tools. macOS uses NSWorkspace to list applications and open the selected path; builds without cgo query the same API through JXA and launch with `open`. Windows uses ShellExecute and Linux uses `xdg-open` for default opening, with application selection hidden where unavailable. These local console actions are excluded from REST/MCP agent tools and the public console.
 
-- Agents call `list_projects {}` to obtain project IDs, absolute paths, the default project, and `full_access` status. This query also works while paused.
-- `read_file`, `write_file`, `list_directory`, `search_files`, and `exec_command` accept an optional `project` ID. Relative paths use the default project unless another is specified. Absolute paths inside added projects are supported; when a project is explicitly selected, the path must belong to it.
+- Agents call `list_projects {}` to obtain project IDs, names, absolute paths, the active project (the dashboard's default), `session_default`, and `full_access` status. This query also works while paused.
+- File tools and `exec_command` accept an optional `project`, given as an ID or a project name (case-insensitive; an ambiguous name is rejected). Most calls need no `project`: an absolute path inside an added project finds its project, and a relative path uses the session's project. When a project is explicitly selected, the path must belong to it.
+- **A session's project is stable.** The first time an agent session uses a relative path, it is pinned to the project that is the default at that moment; later changes to the default in the dashboard, TUI, or CLI affect only new sessions. Calls that send no session ID share one `default` session that is never pinned and always follows the current default. Removing a project releases its pinned sessions to the remaining default. The Projects page shows how many sessions use each project.
+- Results from file tools and `exec_command` include `project: {id, name}`, naming the project the path or working directory resolved to.
 - **Full Access** permits file paths and terminal working directories outside added projects, subject to the current system account's permissions. It lasts only for the current run and is disabled after restart unless started with `--full-access`.
 - Full Access does not enable terminal, desktop, or Chrome capabilities, grant root privileges, or bypass macOS privacy permissions. The page links to Full Disk Access settings; restart after granting access to ReadyRig or the terminal app that launches it.
 - The local console and CLI can manage project access. Full Access is set through the local console or explicit launch flag. Agents can query them. Active file operations finish before access is revoked. Logs include the actual file path or command `cwd` to identify the project used.
@@ -260,17 +262,26 @@ REST, MCP, OpenAPI, and the console share one tool registry.
 
 | Tool | Purpose | Execution |
 | --- | --- | --- |
-| `help` | Current tool definitions and status, optionally by name | Concurrent; available while paused |
-| `read_file` | UTF-8/Base64 reads and line ranges | Concurrent |
+| `help` | Current tool definitions and status, by name, or as a compact name list | Concurrent; available while paused |
+| `use_tool` | Runs any tool by name, including advanced tools not listed by `tools/list` | Concurrent |
 | `list_projects` | Read-only project folders, default, and Full Access status | Concurrent; available while paused |
-| `write_file` | Atomic writes and parent directory creation | Serial |
-| `list_directory` | Directory entries and file metadata | Concurrent |
-| `search_files` | Text search with line numbers | Concurrent |
-| `exec_command` | Commands with cwd, environment, timeout, and early session return | Concurrent |
-| `write_stdin` | Input, polling, stdin closure, and process termination | Concurrent |
-| `computer_screenshot` | Main-screen JPEG, longest edge 1,280 pixels | Serial |
-| `computer_action` | Mouse, keyboard, scroll, and drag; captures the result by default | Serial |
-| `chrome_*` | Dynamically discovered official Chrome DevTools MCP tools | Serial |
+| `read_file` | Line-numbered, paged text reads; images as image content; Base64 | Concurrent |
+| `write_file` | Atomic writes, parent directories, permissions kept, `create_only` | Serial (files) |
+| `edit_file` | Exact-match replacement in an existing file | Serial (files) |
+| `list_directory` | Entries with depth, glob filter, sorting; skips ignored paths when recursing | Concurrent |
+| `glob` | Find files by glob pattern | Concurrent |
+| `search_files` | Literal or regex search with context, `include` globs, and paging | Concurrent |
+| `exec_command` | Commands with cwd, environment, login shell, background mode, and head-and-tail output | Concurrent |
+| `write_stdin` | Input, polling (optionally a long poll for new output), stdin closure, and process termination | Concurrent |
+| `list_tasks` | This session's command sessions: elapsed time, output size, time since last output, exit code | Concurrent |
+| `computer_screenshot` | JPEG of a display (longest edge 1,280 pixels) or a zoomed region of an earlier frame | Serial (computer) |
+| `computer_action` | Mouse, keyboard, scroll, drag, paste, and wait; one action or a chained `actions[]` batch | Serial (computer) |
+| `computer_ui_tree` | Accessibility elements with refs that `computer_action` can click | Serial (computer) |
+| `computer_app` | List windows; open or focus an application | Serial (computer) |
+| `computer_clipboard` | Read or replace clipboard text | Serial (computer) |
+| `chrome_*` | Dynamically discovered official Chrome DevTools MCP tools | Serial (browser) |
+
+"Serial" means one call at a time within that capability: a slow browser call no longer delays a file write or a screenshot. Mutating tools also accept an optional one-line `description`, shown in the activity log and not passed to the tool.
 
 ### Tool help
 
@@ -278,7 +289,26 @@ Call `help` with `{}` to obtain currently allowed tools, including names, descri
 
 Use `{"name":"exec_command"}` to inspect one tool even when disabled, or `{"include_disabled":true}` to include all registered tools and unavailable reasons (`capability_disabled` / `control_paused`). `available` reflects ReadyRig's capability and pause checks; operating system permissions and Chrome connection approval may still be required. Tools removed from the registry are absent from the list.
 
-`help` is read-only, always enabled, works while paused, and is logged. Call it through `POST /api/v1/tools/help`, the MCP tool named `help`, or the local Tools page.
+`help` is read-only, always enabled, works while paused, and is logged. Call it through `POST /api/v1/tools/help`, the MCP tool named `help`, or the local Tools page. `{"compact":true}` lists only names and one-line descriptions; fetch one full schema with `{"name":"..."}`.
+
+### Tool listing and advanced tools
+
+`tools/list` advertises only tools whose capability is enabled, so a model is not shown tools that would fail. The REST catalogue and the local Tools page still list everything. The twelve Chrome DevTools inspection tools that most browsing tasks do not need (console and network inspection, CSS styles, emulation, resizing, Lighthouse, performance traces, heap snapshots) form the `advanced` group: they stay callable but are left out of `tools/list`. `help` shows them, and `use_tool` with `{"name":"chrome_list_network_requests","arguments":{...}}` runs one. Set `READYRIG_EXPOSE_ALL_TOOLS=1` before starting ReadyRig to advertise them anyway.
+
+### File tools
+
+- `read_file` returns `cat -n` style numbered lines, up to 2,000 lines or 128 KiB per call, and names the `start_line` that continues a longer file. `start_line`, `end_line`, and `limit` page through it, and the result reports `total_lines`. PNG, JPEG, GIF, and WebP files (up to 5 MiB) come back as image content. Use `encoding: "base64"` for other binary data.
+- `edit_file` replaces `old_string` with `new_string` and fails unless it matches exactly once; `replace_all` replaces every match. It keeps file permissions and CRLF line endings and returns the first changed line with a numbered snippet. `write_file` keeps the permissions of an existing file, creates new files as 0644, and refuses to overwrite with `create_only`.
+- `list_directory` accepts `depth` (up to 8), `pattern`, `type`, `sort` (`name`, `modified`, `size`), and `limit`. `glob` finds files by pattern such as `**/*.go` or `*.{md,txt}`. When they recurse, both skip `.git`, `node_modules`, and paths excluded by `.gitignore` files (nested files and negation included) unless `no_ignore` is set.
+- `search_files` is literal by default. `regex` selects RE2 expressions; `case_insensitive`, `include`, `context` (0-5 lines), and `output: "files"` refine it. At most `max_results` matches are returned; a truncated result carries `next_offset` to pass back as `offset`.
+
+### Commands and background jobs
+
+- A non-zero exit code is data: `exec_command` returns `exit_code` together with the output and the call is marked failed in the activity log, but it is not a tool error. Timeouts and cancellation are tool errors with the codes `timeout` and `cancelled`. `timeout` may be up to 14,400 seconds.
+- Each stream returns at most 30 KiB per call, as its start and end with the omitted size in between. The whole stream (up to 64 MiB) is saved under the data directory and reported as `stdout_path` / `stderr_path`; read it with `read_file` using that `spill:<name>` path. Saved output older than 24 hours is deleted when the next command starts.
+- Children get a scrubbed environment with the usual tool directories (Homebrew, `~/.local/bin`, `~/go/bin`, Cargo, Bun, Volta) appended to `PATH`. `login_shell: true` runs the command through your login shell so profile-defined tools (nvm, pyenv) are found.
+- `background: true` returns immediately with a `session_id`. When the job later ends, ReadyRig reports it in the next tool result of the same session as a `[notice]` text line and a `notices` field (REST responses carry `notices` too), and sends a `notifications/message` event to clients that hold the optional event stream described under MCP. At most 32 undelivered notices are kept per session.
+- **Progress without streaming.** MCP progress notifications need a streamed response, which Quick Tunnels and many relays cannot carry, so progress is pull-based. A running result reports `elapsed_ms`, `output_bytes`, and `idle_ms` (time since the last output), which tells a busy job from a hung one. While a job has run for more than five seconds, any other tool result in the same session carries a `[progress]` line for it (and a `task_progress` entry in `notices`), at most once every 15 seconds and for at most five jobs. `list_tasks` shows every command session of the session at once, including recently finished ones and their saved-output paths. `write_stdin` with `return_on: "output"` and a long `yield_time_ms` (up to 20 seconds; keep it below your client's request timeout) is a long poll: it returns as soon as the job prints something, or when it exits, so a log can be followed without busy polling.
 
 ### REST
 
@@ -304,12 +334,17 @@ POST /api/v1/fs/read
 POST /api/v1/fs/write
 POST /api/v1/fs/list
 POST /api/v1/fs/search
+POST /api/v1/fs/edit
+POST /api/v1/fs/glob
 POST /api/v1/computer/screenshot
 POST /api/v1/computer/action
+POST /api/v1/computer/ui-tree
+POST /api/v1/computer/app
+POST /api/v1/computer/clipboard
 GET  /api/v1/openapi.json
 ```
 
-Responses use `{call_id, status, result, error}`. Tool execution failures return HTTP 422; paused control or disabled capabilities return 423. Nonzero command exits retain stdout, stderr, and `exit_code` and are marked as failures. Missing, incorrect, or previous-run access paths return 404; cross-origin browser requests return 403; exceeding 240 requests per minute returns 429.
+Responses use `{call_id, status, result, error}`, plus `error_code` for failures (`unknown_tool`, `invalid_arguments`, `capability_disabled`, `control_paused`, `timeout`, `cancelled`, `session_not_found`, `browser_not_ready`, `tool_error`), `images` when the tool returns images, and `notices` for finished background jobs. Tool execution failures return HTTP 422; paused control or disabled capabilities return 423. A command that exits non-zero returns HTTP 200 with `exit_code` and the output, and `status` is `error` in the response and the activity log. Missing, incorrect, or previous-run access paths return 404; cross-origin browser requests return 403; exceeding 240 requests per minute returns 429.
 
 ### MCP
 
@@ -325,7 +360,11 @@ Local and temporary URLs get a new cryptographically random eight-character alph
 }
 ```
 
-MCP uses HTTP POST JSON-RPC. `initialize` returns `Mcp-Session-Id`, which subsequent requests must include. Supported operations are `initialize`, `ping`, `tools/list`, `tools/call`, and initialization notifications. The gateway supports protocol 2025-06-18 and single-request JSON transport compatibility with 2025-03-26. Legacy SSE, JSON-RPC batches, MCP stdio, and server-initiated requests are unsupported. Images are returned as separate MCP image content. See [Security boundaries and limitations](#security-boundaries-and-limitations) for disconnect behavior.
+MCP uses HTTP POST JSON-RPC. `initialize` returns `Mcp-Session-Id`, which subsequent requests must include. Supported operations are `initialize`, `ping`, `logging/setLevel`, `tools/list`, `tools/call`, initialization notifications, and `notifications/cancelled`, which stops the named in-flight call. The gateway supports protocol 2025-06-18 and single-request JSON transport compatibility with 2025-03-26. JSON-RPC batches, MCP stdio, and server-initiated requests are unsupported. `serverInfo.version` is the ReadyRig version.
+
+Tool results are returned as MCP content blocks: images as image content, then (for file reads, searches, listings, and commands) the plain-text body, then a JSON block with `call_id`, `result` metadata, `error`, `error_code`, and `notices`. File and command bodies are therefore not JSON-escaped.
+
+A client may also open `GET /mcp` with `Accept: text/event-stream` and its `Mcp-Session-Id`. That optional stream carries `notifications/tools/list_changed` when a capability is switched or Chrome tools appear or disappear, and `notifications/message` events with `kind: "task_finished"` for background jobs. It is not available through Quick Tunnels or other proxies that buffer SSE; the `notices` mechanism works everywhere. `notifications/progress` is not sent for the same reason; the pull-based progress described under Commands and background jobs replaces it. See [Security boundaries and limitations](#security-boundaries-and-limitations) for disconnect behavior.
 
 ### Computer-use coordinates
 
@@ -343,7 +382,13 @@ MCP uses HTTP POST JSON-RPC. `initialize` returns `Mcp-Session-Id`, which subseq
 }
 ```
 
-Supported actions: `mouse_move`, `left_click`, `right_click`, `middle_click`, `double_click`, `drag`, `scroll`, `type`, and `key`. Drag uses `to: [x,y]`; scroll uses `scroll_delta: [horizontal,vertical]`; key combinations use `keys: ["cmd","c"]`. Coordinates must be within the image. Frames must belong to the current session and be less than five minutes old. Take a new screenshot after display layout changes. Post-action capture waits 200 ms before observing.
+Supported actions: `mouse_move`, `left_click`, `right_click`, `middle_click`, `double_click`, `triple_click`, `drag`, `scroll`, `type`, `paste`, `key`, and `wait`. Drag uses `to: [x,y]`; scroll uses `scroll_delta: [horizontal,vertical]` and, when given a `coordinate`, scrolls there; a key chord is any modifiers plus one key, `keys: ["cmd","c"]`; `modifiers: ["cmd","shift"]` are held during a click, drag, or scroll; `paste` places text on the clipboard, presses Cmd+V, and restores the previous clipboard, which suits long or non-ASCII text. Coordinates must be within the image. Frames must belong to the current session and be less than five minutes old. Take a new screenshot after display layout changes.
+
+- **Batches.** `actions: [...]` runs up to 25 steps in order in one call (each with the same fields as a single action; the top-level `frame_id` is their default) and takes one screenshot at the end. Every step is validated before any runs. If a step fails, the error names it and the result reports `completed`.
+- **Settling.** The screenshot returned after an action is taken once two consecutive captures are identical, waiting at most `settle_ms` (default 1,000; `0` captures after a fixed 200 ms). `capture_after: false` skips it.
+- **Zoom and displays.** `computer_screenshot` with `region: [x1,y1,x2,y2]` and the `frame_id` it refers to returns that area at full resolution as a new frame, and coordinates in it map back to the screen. `display` selects a monitor; frames from a second monitor map to its position in the global coordinate space.
+- **Accessibility.** `computer_ui_tree` lists an application's buttons, fields, menu items, and text with refs (`e12`). Pass `element: "e12"` to `computer_action` instead of a coordinate. Refs belong to the session that listed them and last five minutes. This needs the Accessibility permission, and window titles in `computer_app` need Screen Recording.
+- **Clipboard and apps.** `computer_clipboard` reads or replaces the clipboard text (it is recorded in the activity log); `computer_app` lists windows and opens or focuses an application by name.
 
 ## Automatic updates
 

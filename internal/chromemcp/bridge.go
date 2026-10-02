@@ -192,6 +192,24 @@ func (b *Bridge) reconcile(ctx context.Context) {
 
 var toolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,57}$`)
 
+// advancedTools are the DevTools inspection tools that most browsing tasks never
+// need. They stay callable (directly or through use_tool) but are left out of
+// tools/list so the everyday browser tools are not buried in schemas.
+var advancedTools = map[string]bool{
+	"get_console_message": true, "list_console_messages": true,
+	"get_network_request": true, "list_network_requests": true,
+	"get_css_styles": true, "emulate": true, "resize_page": true,
+	"lighthouse_audit": true, "take_heapsnapshot": true,
+	"performance_analyze_insight": true, "performance_start_trace": true, "performance_stop_trace": true,
+}
+
+func groupOf(name string) string {
+	if advancedTools[name] {
+		return "advanced"
+	}
+	return ""
+}
+
 func (b *Bridge) loadTools(ctx context.Context, c *client) ([]harness.Tool, error) {
 	var out []harness.Tool
 	seen := map[string]bool{}
@@ -226,13 +244,13 @@ func (b *Bridge) loadTools(ctx context.Context, c *client) ([]harness.Tool, erro
 			seen[t.Name] = true
 			name := t.Name
 			readOnly, _ := t.Annotations["readOnlyHint"].(bool)
-			out = append(out, harness.Tool{Spec: harness.Spec{Name: "chrome_" + name, Description: t.Description, Category: "browser", InputSchema: t.InputSchema, OutputSchema: t.OutputSchema, Annotations: t.Annotations, Mutating: !readOnly, Parallel: false}, External: true, Run: func(ctx context.Context, in harness.Invocation) (harness.Output, error) {
+			out = append(out, harness.Tool{Spec: harness.Spec{Name: "chrome_" + name, Description: t.Description, Category: "browser", InputSchema: t.InputSchema, OutputSchema: t.OutputSchema, Annotations: t.Annotations, Mutating: !readOnly, Parallel: false, Group: groupOf(name)}, External: true, Run: func(ctx context.Context, in harness.Invocation) (harness.Output, error) {
 				b.mu.Lock()
 				available := b.client == c && b.status.State == "ready"
 				message := b.status.Message
 				b.mu.Unlock()
 				if !available {
-					return harness.Output{}, fmt.Errorf("Chrome 尚未就绪：%s", message)
+					return harness.Output{}, &harness.ToolError{Code: "browser_not_ready", Message: "Chrome is not ready: " + message}
 				}
 				// A stale tool reference must never reconnect and silently repeat an action.
 				callCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -244,11 +262,11 @@ func (b *Bridge) loadTools(ctx context.Context, c *client) ([]harness.Tool, erro
 				}
 				var result map[string]any
 				if json.Unmarshal(raw, &result) != nil || result == nil {
-					return harness.Output{}, errors.New("Chrome MCP 返回了无效结果")
+					return harness.Output{}, errors.New("Chrome DevTools MCP returned an invalid result")
 				}
 				out := harness.Output{Value: result, MCPResult: result}
 				if failed, _ := result["isError"].(bool); failed {
-					return out, errors.New("Chrome DevTools 工具执行失败，请查看返回内容")
+					return out, &harness.ToolError{Code: "browser_tool_failed", Message: "the Chrome DevTools tool reported an error; see the returned content"}
 				}
 				return out, nil
 			}})

@@ -26,6 +26,12 @@ type Spec struct {
 	Parallel     bool           `json:"parallel"`
 	Annotations  map[string]any `json:"annotations,omitempty"`
 	OutputSchema map[string]any `json:"outputSchema,omitempty"`
+	// Group "advanced" tools stay callable (directly or through use_tool) but are
+	// left out of tools/list; help lists them. Empty means a core tool.
+	Group string `json:"group,omitempty"`
+	// Lock names the resource a non-parallel tool serialises on; the default is
+	// its category, so a slow browser call never blocks a file write.
+	Lock string `json:"-"`
 }
 type Invocation struct {
 	ID, Session, Client string
@@ -38,6 +44,53 @@ type Output struct {
 	Snapshot   func() any
 	Cancel     context.CancelFunc
 	MCPResult  map[string]any
+	// Text is returned to MCP clients as a plain text block in place of the
+	// Value keys listed in TextKeys, so bodies are not JSON-escaped.
+	Text     string
+	TextKeys []string
+	// Images are returned as image blocks; they are never written to the audit log.
+	Images []Image
+	// Failure marks the audit record as failed while the call still returns its
+	// result normally (a command that exited non-zero is data, not a tool error).
+	Failure string
+}
+
+// Image is a base64 image returned to the agent.
+type Image struct {
+	MIME string `json:"mimeType"`
+	Data string `json:"data"`
+}
+
+// ToolError carries a stable machine-readable code next to the message.
+type ToolError struct{ Code, Message string }
+
+func (e *ToolError) Error() string { return e.Message }
+
+// ErrorCode classifies err for API responses.
+func ErrorCode(err error) string {
+	var te *ToolError
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &te):
+		return te.Code
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	}
+	return "tool_error"
+}
+
+// Event is a server-initiated notification for one agent session.
+type Event struct {
+	Session string         `json:"-"`
+	Kind    string         `json:"kind"`
+	Data    map[string]any `json:"data"`
+}
+type subscription struct {
+	session string
+	ch      chan Event
 }
 type Handler func(context.Context, Invocation) (Output, error)
 type Tool struct {
@@ -54,25 +107,42 @@ type activeCall struct {
 }
 
 type Registry struct {
-	background  sync.WaitGroup
-	foreground  sync.WaitGroup
-	mu          sync.Mutex
-	tools       map[string]Tool
-	order       []string
-	active      map[string]activeCall
-	paused      bool
-	lastStarted time.Time
-	enabled     map[string]bool
-	serial      chan struct{}
-	store       *store.Store
-	notify      chan struct{}
-	secretsMu   sync.RWMutex
-	secrets     []string
-	OnPause     func()
+	background    sync.WaitGroup
+	foreground    sync.WaitGroup
+	mu            sync.Mutex
+	tools         map[string]Tool
+	order         []string
+	active        map[string]activeCall
+	paused        bool
+	lastStarted   time.Time
+	enabled       map[string]bool
+	locks         map[string]chan struct{}
+	listGen       chan struct{}
+	subs          map[int]subscription
+	pending       map[string][]Event
+	progress      []func(session string) []Event
+	progressSent  map[string]time.Time
+	progressEvery time.Duration
+	nextSub       int
+	// ExposeAll lists advanced tools in tools/list too.
+	ExposeAll bool
+	store     *store.Store
+	notify    chan struct{}
+	secretsMu sync.RWMutex
+	secrets   []string
+	OnPause   func()
 }
 
 func New(s *store.Store, secrets ...string) *Registry {
-	return &Registry{tools: map[string]Tool{}, active: map[string]activeCall{}, enabled: map[string]bool{"system": true, "files": true, "terminal": false, "computer": false, "browser": true}, serial: make(chan struct{}, 1), store: s, notify: make(chan struct{}), secrets: secrets}
+	return &Registry{tools: map[string]Tool{}, active: map[string]activeCall{}, enabled: map[string]bool{"system": true, "files": true, "terminal": false, "computer": false, "browser": true}, locks: map[string]chan struct{}{}, listGen: make(chan struct{}), subs: map[int]subscription{}, pending: map[string][]Event{}, progressSent: map[string]time.Time{}, store: s, notify: make(chan struct{}), secrets: secrets}
+}
+
+// SessionOrDefault is the session name a call without one is recorded under.
+func SessionOrDefault(session string) string {
+	if session == "" {
+		return "default"
+	}
+	return session
 }
 func ID() string {
 	b := make([]byte, 12)
@@ -87,8 +157,199 @@ func (r *Registry) Register(t Tool) {
 	if _, ok := r.tools[t.Spec.Name]; ok {
 		panic("duplicate tool " + t.Spec.Name)
 	}
+	if t.Spec.Mutating && !t.External {
+		addDescription(t.Spec.InputSchema)
+	}
 	r.tools[t.Spec.Name] = t
 	r.order = append(r.order, t.Spec.Name)
+	r.signalList()
+}
+
+// addDescription gives every mutating tool an optional free-text intent that
+// is recorded in the audit log and removed before the handler runs.
+func addDescription(schema map[string]any) {
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return
+	}
+	if _, exists := props["description"]; !exists {
+		props["description"] = Prop("string", "Optional one-line intent shown in the activity log")
+	}
+}
+func stripDescription(raw json.RawMessage) json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return raw
+	}
+	if _, ok := m["description"]; !ok {
+		return raw
+	}
+	delete(m, "description")
+	b, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return b
+}
+
+// ListedSpecs is what tools/list advertises: enabled capabilities, minus the
+// advanced group unless ExposeAll is set.
+func (r *Registry) ListedSpecs() []Spec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := []Spec{}
+	for _, n := range r.order {
+		t := r.tools[n]
+		if !r.enabled[t.Spec.Category] || t.Spec.Group == "advanced" && !r.ExposeAll {
+			continue
+		}
+		out = append(out, t.Spec)
+	}
+	return out
+}
+
+// ToolListChanged is closed whenever the advertised tool list may have changed.
+func (r *Registry) ToolListChanged() <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.listGen
+}
+func (r *Registry) signalList() {
+	// Callers hold r.mu or are single-threaded during setup.
+	close(r.listGen)
+	r.listGen = make(chan struct{})
+}
+
+// Subscribe delivers events for one session until cancel is called.
+func (r *Registry) Subscribe(session string) (<-chan Event, func()) {
+	r.mu.Lock()
+	id := r.nextSub
+	r.nextSub++
+	ch := make(chan Event, 32)
+	r.subs[id] = subscription{session, ch}
+	r.mu.Unlock()
+	return ch, func() {
+		r.mu.Lock()
+		delete(r.subs, id)
+		r.mu.Unlock()
+	}
+}
+
+// Publish never blocks. A session with a live event stream gets the event
+// there; otherwise it is held (at most 32 per session) until that session's
+// next call collects it with TakeNotices, so plain request/response clients
+// still learn that a background job finished.
+func (r *Registry) Publish(e Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	live := false
+	for _, s := range r.subs {
+		if s.session == e.Session {
+			live = true
+			select {
+			case s.ch <- e:
+			default:
+			}
+		}
+	}
+	if live {
+		return
+	}
+	if _, known := r.pending[e.Session]; !known && len(r.pending) >= 512 {
+		return
+	}
+	q := append(r.pending[e.Session], e)
+	if len(q) > 32 {
+		q = q[len(q)-32:]
+	}
+	r.pending[e.Session] = q
+}
+
+// AddProgress registers a source of "still running" status for a session. Its
+// events (kind task_progress) are attached to results by ProgressFor.
+func (r *Registry) AddProgress(fn func(session string) []Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.progress = append(r.progress, fn)
+}
+
+// SetProgressInterval changes how often a session is shown progress (default 15 s).
+func (r *Registry) SetProgressInterval(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.progressEvery = d
+}
+
+// progressSkip lists tools whose own result already reports running work.
+var progressSkip = map[string]bool{"write_stdin": true, "list_tasks": true, "help": true}
+
+// ProgressFor is the pull-based substitute for MCP progress notifications: any
+// tool result in a session can carry a short status line for jobs that session
+// has still running, at most once per interval, with no streaming connection.
+func (r *Registry) ProgressFor(session, tool string) []Event {
+	if progressSkip[tool] {
+		return nil
+	}
+	r.mu.Lock()
+	fns := append([]func(string) []Event(nil), r.progress...)
+	every := r.progressEvery
+	if every == 0 {
+		every = 15 * time.Second
+	}
+	last := r.progressSent[session]
+	r.mu.Unlock()
+	if time.Since(last) < every {
+		return nil
+	}
+	var out []Event
+	for _, fn := range fns {
+		out = append(out, fn(session)...)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	if _, known := r.progressSent[session]; !known && len(r.progressSent) >= 512 {
+		for k := range r.progressSent {
+			delete(r.progressSent, k)
+			break
+		}
+	}
+	r.progressSent[session] = time.Now()
+	r.mu.Unlock()
+	if len(out) > 5 {
+		extra := len(out) - 5
+		out = append(out[:5], Event{Session: session, Kind: "task_progress", Data: map[string]any{"text": fmt.Sprintf("+%d more running tasks; list_tasks shows all", extra)}})
+	}
+	return out
+}
+
+// TakeNotices returns and clears the events held for a session.
+func (r *Registry) TakeNotices(session string) []Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	q := r.pending[session]
+	delete(r.pending, session)
+	return q
+}
+func (r *Registry) lock(key string) chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	l, ok := r.locks[key]
+	if !ok {
+		l = make(chan struct{}, 1)
+		r.locks[key] = l
+	}
+	return l
+}
+func (t Tool) lockKey() string {
+	if t.Spec.Parallel {
+		return ""
+	}
+	if t.Spec.Lock != "" {
+		return t.Spec.Lock
+	}
+	return t.Spec.Category
 }
 func (r *Registry) Specs() []Spec {
 	r.mu.Lock()
@@ -124,6 +385,7 @@ func (r *Registry) ReplaceCategory(category string, tools []Tool) {
 		order = append(order, t.Spec.Name)
 	}
 	r.order = order
+	r.signalList()
 	r.mu.Unlock()
 	r.Signal()
 }
@@ -173,7 +435,11 @@ func (r *Registry) Enable(category string, v bool) error {
 		r.mu.Unlock()
 		return errors.New("unknown category")
 	}
+	changed := r.enabled[category] != v
 	r.enabled[category] = v
+	if changed {
+		r.signalList()
+	}
 	if !v {
 		for _, active := range r.active {
 			if active.category == category {
@@ -210,9 +476,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, in Invocation) (out 
 	if in.ID == "" {
 		in.ID = ID()
 	}
-	if in.Session == "" {
-		in.Session = "default"
-	}
+	in.Session = SessionOrDefault(in.Session)
 	if in.Client == "" {
 		in.Client = "Remote agent"
 	}
@@ -243,6 +507,9 @@ func (r *Registry) Invoke(ctx context.Context, name string, in Invocation) (out 
 			call.Status = "success"
 			if out.Completion != nil {
 				call.Status = "running"
+			} else if out.Failure != "" {
+				call.Status = "error"
+				call.Error = r.redactText(out.Failure)
 			}
 		}
 		b, e := json.Marshal(out.Value)
@@ -277,7 +544,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, in Invocation) (out 
 		r.Signal()
 	}()
 	if !ok {
-		err = errors.New("unknown tool")
+		err = &ToolError{"unknown_tool", "unknown tool"}
 		return
 	}
 	if t.External {
@@ -289,22 +556,30 @@ func (r *Registry) Invoke(ctx context.Context, name string, in Invocation) (out 
 		err = validate(in.Arguments, t.Spec.InputSchema)
 	}
 	if err != nil {
+		err = &ToolError{"invalid_arguments", err.Error()}
 		return
 	}
 	r.mu.Lock()
-	if (r.paused && !t.AvailableWhenPaused) || !r.enabled[t.Spec.Category] {
+	if !r.enabled[t.Spec.Category] {
 		r.mu.Unlock()
 		call.Status = "denied"
-		err = errors.New("控制已暂停或该能力未启用，请在本地控制台启用")
+		err = &ToolError{"capability_disabled", "the " + t.Spec.Category + " capability is disabled; enable it in the local console"}
+		return
+	}
+	if r.paused && !t.AvailableWhenPaused {
+		r.mu.Unlock()
+		call.Status = "denied"
+		err = &ToolError{"control_paused", "control is paused; resume it in the local console"}
 		return
 	}
 	r.active[in.ID] = activeCall{cancel, t.Spec.Category}
 	r.lastStarted = time.Now()
 	r.mu.Unlock()
-	if !t.Spec.Parallel {
+	if key := t.lockKey(); key != "" {
+		lock := r.lock(key)
 		select {
-		case r.serial <- struct{}{}:
-			defer func() { <-r.serial }()
+		case lock <- struct{}{}:
+			defer func() { <-lock }()
 		case <-ctx.Done():
 			err = ctx.Err()
 			return
@@ -312,6 +587,9 @@ func (r *Registry) Invoke(ctx context.Context, name string, in Invocation) (out 
 	}
 	if err = ctx.Err(); err != nil {
 		return
+	}
+	if t.Spec.Mutating && !t.External {
+		in.Arguments = stripDescription(in.Arguments)
 	}
 	out, err = t.Run(ctx, in)
 	return
@@ -336,6 +614,7 @@ func (r *Registry) follow(saved store.Call, out Output) {
 	}()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var final any
 	for {
 		select {
 		case <-ticker.C:
@@ -367,15 +646,30 @@ func (r *Registry) follow(saved store.Call, out Output) {
 				saved.Error = err.Error()
 			}
 			saved.Result = r.redact(b)
+			final = res.value
 		}
 		if err := r.store.Save(saved); err != nil {
 			log.Printf("persist background result: %v", err)
 		}
 		r.Signal()
 		if saved.Status != "running" {
+			r.Publish(finishedEvent(saved, final))
 			return
 		}
 	}
+}
+
+// finishedEvent summarises a background call without including its output.
+func finishedEvent(c store.Call, final any) Event {
+	data := map[string]any{"call_id": c.ID, "tool": c.Tool, "status": c.Status, "duration_ms": c.Duration}
+	if m, ok := final.(map[string]any); ok {
+		for _, k := range []string{"session_id", "exit_code", "timed_out", "cancelled", "stdout_path", "stderr_path"} {
+			if v, ok := m[k]; ok {
+				data[k] = v
+			}
+		}
+	}
+	return Event{Session: c.Session, Kind: "task_finished", Data: data}
 }
 func (r *Registry) AddSecrets(secrets ...string) {
 	r.secretsMu.Lock()
@@ -407,7 +701,7 @@ func (r *Registry) redact(b []byte) json.RawMessage {
 		case map[string]any:
 			for k, val := range x {
 				lower := strings.ToLower(k)
-				if strings.Contains(lower, "token") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || lower == "authorization" || lower == "api_key" {
+				if sensitiveKey(lower) {
 					x[k] = "[REDACTED]"
 				} else if k == "screenshot" && strings.HasPrefix(fmt.Sprint(val), "data:") {
 					x[k] = "[stored as screenshot]"
@@ -429,6 +723,17 @@ func (r *Registry) redact(b []byte) json.RawMessage {
 	}
 	b, _ = json.Marshal(clean(v))
 	return b
+}
+
+// sensitiveKey matches credential-like keys but not counters such as max_tokens.
+func sensitiveKey(lower string) bool {
+	switch {
+	case strings.Contains(lower, "password"), strings.Contains(lower, "secret"), strings.Contains(lower, "passwd"):
+		return true
+	case lower == "authorization", lower == "api_key", lower == "apikey", lower == "token":
+		return true
+	}
+	return strings.HasSuffix(lower, "_token") || strings.HasSuffix(lower, "token") && !strings.HasSuffix(lower, "tokens")
 }
 func Decode(b []byte, v any) error {
 	d := json.NewDecoder(bytes.NewReader(b))
@@ -483,6 +788,57 @@ func validate(raw []byte, schema map[string]any) error {
 		}
 		if !valid {
 			return fmt.Errorf("%s must be %s", key, kind)
+		}
+		if err := checkConstraints(key, v, p.(map[string]any)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkConstraints enforces the schema keywords the tools declare: enum,
+// minimum/maximum and array size and element types.
+func checkConstraints(key string, v any, p map[string]any) error {
+	if values, ok := p["enum"].([]string); ok {
+		s, _ := v.(string)
+		found := false
+		for _, want := range values {
+			found = found || s == want
+		}
+		if !found {
+			return fmt.Errorf("%s must be one of: %s", key, strings.Join(values, ", "))
+		}
+	}
+	if n, ok := v.(float64); ok {
+		if min, ok := p["minimum"].(int); ok && n < float64(min) {
+			return fmt.Errorf("%s must be at least %d", key, min)
+		}
+		if max, ok := p["maximum"].(int); ok && n > float64(max) {
+			return fmt.Errorf("%s must be at most %d", key, max)
+		}
+	}
+	if items, ok := v.([]any); ok {
+		if min, ok := p["minItems"].(int); ok && len(items) < min {
+			return fmt.Errorf("%s needs at least %d items", key, min)
+		}
+		if max, ok := p["maxItems"].(int); ok && len(items) > max {
+			return fmt.Errorf("%s allows at most %d items", key, max)
+		}
+		if spec, ok := p["items"].(map[string]any); ok {
+			for _, item := range items {
+				valid := true
+				switch spec["type"] {
+				case "string":
+					_, valid = item.(string)
+				case "number", "integer":
+					_, valid = item.(float64)
+				case "object":
+					_, valid = item.(map[string]any)
+				}
+				if !valid {
+					return fmt.Errorf("%s items must be %v", key, spec["type"])
+				}
+			}
 		}
 	}
 	return nil

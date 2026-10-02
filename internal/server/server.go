@@ -55,6 +55,7 @@ type Server struct {
 	rateStart                                 time.Time
 	rateCount                                 int
 	sessions                                  map[string]mcpSession
+	inflight                                  map[string]context.CancelFunc
 	openLocalPath                             localPathOpener
 	openSystemSettings                        systemSettingsOpener
 }
@@ -80,13 +81,13 @@ func (s *Server) Gateway() http.Handler {
 		write(w, s.Registry.Specs())
 	})
 	mux.HandleFunc("POST /api/v1/tools/{name}", s.invoke)
-	for path, name := range map[string]string{"bash/exec": "exec_command", "bash/stdin": "write_stdin", "fs/read": "read_file", "fs/write": "write_file", "fs/list": "list_directory", "fs/search": "search_files", "computer/action": "computer_action", "computer/screenshot": "computer_screenshot"} {
+	for path, name := range map[string]string{"bash/exec": "exec_command", "bash/stdin": "write_stdin", "fs/read": "read_file", "fs/write": "write_file", "fs/list": "list_directory", "fs/search": "search_files", "computer/action": "computer_action", "computer/screenshot": "computer_screenshot", "fs/edit": "edit_file", "fs/glob": "glob", "computer/ui-tree": "computer_ui_tree", "computer/app": "computer_app", "computer/clipboard": "computer_clipboard"} {
 		name := name
 		mux.HandleFunc("POST /api/v1/"+path, func(w http.ResponseWriter, r *http.Request) { r.SetPathValue("name", name); s.invoke(w, r) })
 	}
 	mux.HandleFunc("GET /api/v1/openapi.json", s.openapi)
 	mux.HandleFunc("POST /mcp", s.mcp)
-	mux.HandleFunc("GET /mcp", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusMethodNotAllowed) })
+	mux.HandleFunc("GET /mcp", s.mcpStream)
 	mux.Handle("/app/", http.StripPrefix("/app", s.PublicUI()))
 	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -122,7 +123,18 @@ func (s *Server) invoke(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(status)
-	write(w, map[string]any{"call_id": call.ID, "result": out.Value, "error": call.Error, "status": call.Status})
+	body := map[string]any{"call_id": call.ID, "result": out.Value, "error": call.Error, "status": call.Status}
+	if err != nil {
+		body["error_code"] = harness.ErrorCode(err)
+	}
+	if len(out.Images) > 0 {
+		body["images"] = out.Images
+	}
+	sid := harness.SessionOrDefault(session)
+	if notices := append(s.Registry.TakeNotices(sid), s.Registry.ProgressFor(sid, r.PathValue("name"))...); len(notices) > 0 {
+		body["notices"] = NoticeValues(notices)
+	}
+	write(w, body)
 }
 func (s *Server) UI() http.Handler {
 	mux := http.NewServeMux()

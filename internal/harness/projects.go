@@ -20,6 +20,8 @@ type ProjectState struct {
 	Projects   []Project `json:"projects"`
 	Active     string    `json:"active"`
 	FullAccess bool      `json:"full_access"`
+	// Pinned counts the agent sessions that currently resolve relative paths to each project.
+	Pinned map[string]int `json:"pinned,omitempty"`
 }
 
 // Projects owns local grants. Full Access is deliberately session-only.
@@ -28,10 +30,14 @@ type Projects struct {
 	mu    sync.RWMutex
 	state ProjectState
 	file  string
+	// pins remembers which project each agent session's relative paths mean,
+	// so changing the default in the dashboard never moves a running session.
+	pinMu sync.Mutex
+	pins  map[string]string
 }
 
 func NewProjects(workspace, file string) (*Projects, error) {
-	p := &Projects{file: file}
+	p := &Projects{file: file, pins: map[string]string{}}
 	if file != "" {
 		b, err := os.ReadFile(file)
 		if err == nil {
@@ -99,6 +105,14 @@ func (p *Projects) Snapshot() ProjectState {
 	defer p.mu.RUnlock()
 	s := p.state
 	s.Projects = append([]Project{}, s.Projects...)
+	p.pinMu.Lock()
+	defer p.pinMu.Unlock()
+	for _, id := range p.pins {
+		if s.Pinned == nil {
+			s.Pinned = map[string]int{}
+		}
+		s.Pinned[id]++
+	}
 	return s
 }
 func (p *Projects) SetFullAccess(enabled bool) {
@@ -155,6 +169,7 @@ func (p *Projects) Change(action, id, name, path string) error {
 				return errors.New("请至少保留一个项目")
 			}
 			p.state.Projects = append(p.state.Projects[:index], p.state.Projects[index+1:]...)
+			p.dropPins(id)
 			if p.state.Active == id {
 				p.state.Active = p.state.Projects[0].ID
 			}
@@ -200,26 +215,19 @@ func (p *Projects) save() error {
 }
 
 // Resolve returns an open root and a relative path. close releases both root and lease.
-func (p *Projects) Resolve(project, path string) (root *os.Root, relative string, close func(), err error) {
+// Resolve maps a path to an open project root. project is an ID or a project
+// name (empty: absolute paths find their containing project, relative paths use
+// the session's project). session may be empty.
+func (p *Projects) Resolve(session, project, path string) (root *os.Root, relative string, close func(), err error) {
 	p.mu.RLock()
 	close = p.mu.RUnlock
 	fail := func(e error) (*os.Root, string, func(), error) { p.mu.RUnlock(); return nil, "", nil, e }
 	if path == "" {
 		return fail(errors.New("path is required"))
 	}
-	selected := Project{}
-	selectedID := project
-	if selectedID == "" {
-		selectedID = p.state.Active
-	}
-	for _, v := range p.state.Projects {
-		if v.ID == selectedID {
-			selected = v
-			break
-		}
-	}
-	if selected.ID == "" {
-		return fail(errors.New("project not found; use list_projects"))
+	selected, pickErr := p.pick(session, project, !filepath.IsAbs(path))
+	if pickErr != nil {
+		return fail(pickErr)
 	}
 	base := selected.Path
 	if p.state.FullAccess {
@@ -305,8 +313,8 @@ func unrestrictedPath(path string) (string, error) {
 	return resolved, nil
 }
 
-func (p *Projects) Directory(project, path string) (string, error) {
-	root, rel, close, err := p.Resolve(project, path)
+func (p *Projects) Directory(session, project, path string) (string, error) {
+	root, rel, close, err := p.Resolve(session, project, path)
 	if err != nil {
 		return "", err
 	}
@@ -319,12 +327,142 @@ func (p *Projects) Directory(project, path string) (string, error) {
 	dir.Close()
 	return filepath.EvalSymlinks(filepath.Join(root.Name(), rel))
 }
+
+const maxPins = 1024
+
+// pick chooses the project for a call. An explicit reference (ID, or a name
+// that matches one project) always wins. Otherwise the session's pinned project
+// is used; the first relative path pins the active project for that session.
+// The shared "default" session, used by clients that send no session ID, is
+// never pinned: it follows the dashboard's default.
+func (p *Projects) pick(session, ref string, pin bool) (Project, error) {
+	if ref != "" {
+		var byName []Project
+		for _, v := range p.state.Projects {
+			if v.ID == ref {
+				return v, nil
+			}
+			if strings.EqualFold(v.Name, ref) {
+				byName = append(byName, v)
+			}
+		}
+		switch len(byName) {
+		case 1:
+			return byName[0], nil
+		case 0:
+			return Project{}, fmt.Errorf("project %q not found; known projects: %s", ref, p.names())
+		}
+		return Project{}, fmt.Errorf("project name %q is ambiguous; use its ID from list_projects", ref)
+	}
+	pinnable := session != "" && session != "default"
+	p.pinMu.Lock()
+	defer p.pinMu.Unlock()
+	if pinnable {
+		if id, ok := p.pins[session]; ok {
+			for _, v := range p.state.Projects {
+				if v.ID == id {
+					return v, nil
+				}
+			}
+			delete(p.pins, session)
+		}
+	}
+	for _, v := range p.state.Projects {
+		if v.ID == p.state.Active {
+			if pin && pinnable {
+				if len(p.pins) >= maxPins {
+					for k := range p.pins {
+						delete(p.pins, k)
+						break
+					}
+				}
+				p.pins[session] = v.ID
+			}
+			return v, nil
+		}
+	}
+	return Project{}, errors.New("no active project; use list_projects")
+}
+func (p *Projects) names() string {
+	names := make([]string, 0, len(p.state.Projects))
+	for _, v := range p.state.Projects {
+		names = append(names, v.Name)
+	}
+	return strings.Join(names, ", ")
+}
+func (p *Projects) dropPins(id string) {
+	p.pinMu.Lock()
+	defer p.pinMu.Unlock()
+	for session, pinned := range p.pins {
+		if pinned == id {
+			delete(p.pins, session)
+		}
+	}
+}
+
+// SessionDefault is the project a relative path means to this session right now.
+func (p *Projects) SessionDefault(session string) (Project, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.pinMu.Lock()
+	defer p.pinMu.Unlock()
+	id := p.state.Active
+	if pinned, ok := p.pins[session]; ok && session != "default" {
+		id = pinned
+	}
+	for _, v := range p.state.Projects {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return Project{}, false
+}
+
+// ProjectFor finds the approved project that contains an absolute path.
+func (p *Projects) ProjectFor(abs string) (Project, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	best, found := -1, Project{}
+	for _, v := range p.state.Projects {
+		if rel, err := filepath.Rel(v.Path, abs); err == nil && filepath.IsLocal(rel) && len(v.Path) > best {
+			best, found = len(v.Path), v
+		}
+	}
+	return found, best >= 0
+}
+
+// tagProject names the project a result belongs to, found from the absolute
+// path in key, so the agent can see what its relative path resolved to.
+func tagProject(p *Projects, out Output, key string) {
+	if p == nil {
+		return
+	}
+	if m, ok := out.Value.(map[string]any); ok {
+		if path, ok := m[key].(string); ok {
+			if pr, found := p.ProjectFor(path); found {
+				m["project"] = map[string]any{"id": pr.ID, "name": pr.Name}
+			}
+		}
+	}
+}
+
+type projectList struct {
+	ProjectState
+	// SessionDefault is what relative paths mean to the calling session.
+	SessionDefault *Project `json:"session_default,omitempty"`
+}
+
 func (p *Projects) Register(r *Registry) {
-	r.Register(Tool{Spec: Spec{Name: "list_projects", Category: "system", Description: "List locally approved projects, their IDs and absolute paths, the active default project and Full Access status. Pass project=<id> to file tools or exec_command. Relative paths default to the active project; absolute paths must belong to an approved project unless Full Access is enabled locally. This tool cannot grant access or change projects.", Parallel: true, InputSchema: Schema(map[string]any{})}, AvailableWhenPaused: true, Run: func(ctx context.Context, in Invocation) (Output, error) {
+	r.Register(Tool{Spec: Spec{Name: "list_projects", Category: "system", Description: "List approved projects (id, name, absolute path), the active project that the dashboard marks as the default, session_default (the project your relative paths mean), and the Full Access status. A session's default is fixed the first time it uses a relative path, so changing the default in the dashboard affects only new sessions. Name a project by id or name in the project argument of file tools and exec_command, or just use absolute paths inside a project (no project argument needed). This tool cannot grant access or change projects.", Parallel: true, InputSchema: Schema(map[string]any{})}, AvailableWhenPaused: true, Run: func(ctx context.Context, in Invocation) (Output, error) {
 		var a struct{}
 		if err := Decode(in.Arguments, &a); err != nil {
 			return Output{}, err
 		}
-		return Output{Value: p.Snapshot()}, ctx.Err()
+		list := projectList{ProjectState: p.Snapshot()}
+		list.Pinned = nil
+		if d, ok := p.SessionDefault(in.Session); ok {
+			list.SessionDefault = &d
+		}
+		return Output{Value: list}, ctx.Err()
 	}})
 }

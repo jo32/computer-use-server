@@ -65,7 +65,7 @@ func (s *Server) localOpenRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) localOpenPath(project, path string) (string, error) {
-	root, relative, close, err := s.Projects.Resolve(project, path)
+	root, relative, close, err := s.Projects.Resolve("", project, path)
 	if err != nil {
 		return "", err
 	}
