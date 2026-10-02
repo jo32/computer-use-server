@@ -360,3 +360,66 @@ func TestHeldNoticesAreBounded(t *testing.T) {
 		t.Fatalf("%d sessions held", n)
 	}
 }
+
+func TestTerminateIsTheRequestedOutcomeNotAnError(t *testing.T) {
+	r, _ := execForTest(t)
+	events, cancel := r.Subscribe("test-session")
+	defer cancel()
+	out, call, err := r.Invoke(context.Background(), "exec_command", Invocation{Session: "test-session", Arguments: []byte(`{"command":"printf partial; sleep 30","yield_time_ms":300}`)})
+	if err != nil || asMap(t, out)["running"] != true {
+		t.Fatal(out.Value, err)
+	}
+	id := asMap(t, out)["session_id"]
+	res, err := invoke(t, r, "write_stdin", map[string]any{"session_id": id, "terminate": true})
+	if err != nil {
+		t.Fatalf("a requested terminate must not be a tool error: %v", err)
+	}
+	v := asMap(t, res)
+	if v["running"] != false || v["terminated"] != true || v["stdout"] != "" {
+		t.Fatalf("result: %v", v)
+	}
+	if _, has := v["exit_code"]; has {
+		t.Fatal("a killed process has no exit code to report")
+	}
+	if res.Failure != "" || !strings.Contains(res.Text, "[terminated at your request]") || strings.Contains(res.Text, "exit code") {
+		t.Fatalf("failure=%q text=%q", res.Failure, res.Text)
+	}
+	r.WaitBackground()
+	saved, err := r.store.Get(call.ID)
+	if err != nil || saved.Status != "success" || saved.Error != "" {
+		t.Fatalf("the original call must not be marked failed: %+v %v", saved, err)
+	}
+	select {
+	case e := <-events:
+		if e.Data["terminated"] != true || e.Data["status"] != "success" {
+			t.Fatalf("event: %+v", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no task_finished event")
+	}
+	tasks, err := invoke(t, r, "list_tasks", map[string]any{})
+	if err != nil || !strings.Contains(tasks.Text, "terminated after") || strings.Contains(tasks.Text, "exited") {
+		t.Fatalf("%q %v", tasks.Text, err)
+	}
+	// Terminating a process that already exited leaves its real status alone.
+	done, _ := invoke(t, r, "exec_command", map[string]any{"command": "sleep 0.3; exit 5", "yield_time_ms": 1})
+	time.Sleep(600 * time.Millisecond)
+	late, err := invoke(t, r, "write_stdin", map[string]any{"session_id": asMap(t, done)["session_id"], "terminate": true})
+	if lv := asMap(t, late); err != nil || lv["exit_code"] != 5 || lv["terminated"] != nil {
+		t.Fatalf("late terminate rewrote the outcome: %v %v", lv, err)
+	}
+}
+func TestPauseStillCancelsWithAnError(t *testing.T) {
+	r, p := execForTest(t)
+	r.OnPause = p.Stop
+	out, call, err := r.Invoke(context.Background(), "exec_command", Invocation{Session: "s", Arguments: []byte(`{"command":"sleep 30","yield_time_ms":1}`)})
+	if err != nil || asMap(t, out)["running"] != true {
+		t.Fatal(out.Value, err)
+	}
+	r.SetPaused(true)
+	r.WaitBackground()
+	saved, _ := r.store.Get(call.ID)
+	if saved.Status != "cancelled" {
+		t.Fatalf("a pause is not the agent's choice and must stay a cancellation: %+v", saved)
+	}
+}

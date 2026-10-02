@@ -131,7 +131,7 @@ func (s *Server) invoke(w http.ResponseWriter, r *http.Request) {
 		body["images"] = out.Images
 	}
 	sid := harness.SessionOrDefault(session)
-	if notices := append(s.Registry.TakeNotices(sid), s.Registry.ProgressFor(sid, r.PathValue("name"))...); len(notices) > 0 {
+	if notices := harness.WithoutOwn(append(s.Registry.TakeNotices(sid), s.Registry.ProgressFor(sid, r.PathValue("name"))...), out.Value); len(notices) > 0 {
 		body["notices"] = NoticeValues(notices)
 	}
 	write(w, body)

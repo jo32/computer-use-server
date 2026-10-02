@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -206,7 +207,10 @@ type process struct {
 	code           int
 	timedOut       bool
 	cancelled      bool
-	ended          time.Time
+	// terminated is set when the agent asked write_stdin to kill the process:
+	// that is the outcome it requested, not a failure.
+	terminated atomic.Bool
+	ended      time.Time
 }
 type Processes struct {
 	mu       sync.Mutex
@@ -243,7 +247,7 @@ func (p *Processes) Register(r *Registry) {
 	r.Register(Tool{Spec: Spec{Name: "exec_command", Category: "terminal", Description: "Run a shell command on the host (NOT an OS sandbox). cwd is project-relative or a permitted absolute path. A non-zero exit code is returned as data (exit_code), not as a tool error. Output is returned as text, cut to the start and end when longer than 30 KiB; the full output is then saved and its path reported as stdout_path/stderr_path for read_file. If the command is still running after yield_time_ms the result has a session_id: poll or answer it with write_stdin. Set background=true for long jobs (servers, builds, test runs): it returns at once and a task_finished notification is sent when the job ends. login_shell=true loads your shell profile first (needed for Homebrew, nvm, pyenv tools that are not on the default PATH). There is no PTY. For file work prefer read_file, edit_file, write_file, search_files and glob over cat, sed, grep and find.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"command": Prop("string", "Shell command"), "project": projectProp, "cwd": Prop("string", "Project-relative or permitted absolute directory"), "timeout": limited("integer", "Seconds before the command is killed; default 60 (1800 with background), max 14400", 1, maxTimeout), "yield_time_ms": limited("integer", "How long to wait for output before returning a session_id, default 1000", 0, 10000), "background": Prop("boolean", "Return immediately and notify when the command finishes"), "login_shell": Prop("boolean", "Run through the user's login shell so profile PATH entries apply"), "env": Prop("object", "Additional environment variables")}, "command")}, Run: p.tagged(p.start)})
 	r.Register(Tool{Spec: Spec{Name: "list_tasks", Category: "terminal", Description: "List the command sessions this session started, running and recently finished: session_id, command, elapsed time, bytes of output, how long since the last output, exit code, and saved-output paths. A quick way to see whether a background job is progressing, stuck, or done.", Parallel: true, InputSchema: Schema(map[string]any{})}, Run: p.listTasks})
 	r.AddProgress(p.progress)
-	r.Register(Tool{Spec: Spec{Name: "write_stdin", Category: "terminal", Description: "Write to or poll a running exec_command session. An empty chars value polls and returns only output not yet read; a running result reports elapsed_ms, output_bytes and idle_ms so you can tell progress from a hang. Use return_on=output with a long yield_time_ms to follow a job without busy polling. terminate=true kills the process group; close_stdin=true sends EOF.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"session_id": Prop("string", "Process session_id from exec_command"), "chars": Prop("string", "Input bytes"), "yield_time_ms": limited("integer", "Longest wait for output, default 1000, max 20000", 0, maxPollWait), "return_on": enum("timeout (default) waits the full time unless the process exits; output returns as soon as new output arrives, a long poll for following logs", "timeout", "output"), "terminate": Prop("boolean", "Cancel process"), "close_stdin": Prop("boolean", "Close stdin")}, "session_id")}, Run: p.tagged(p.input)})
+	r.Register(Tool{Spec: Spec{Name: "write_stdin", Category: "terminal", Description: "Write to or poll a running exec_command session. An empty chars value polls and returns only output not yet read; a running result reports elapsed_ms, output_bytes and idle_ms so you can tell progress from a hang. Use return_on=output with a long yield_time_ms to follow a job without busy polling. terminate=true kills the process group and returns a normal result with terminated:true (not an error); close_stdin=true sends EOF.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"session_id": Prop("string", "Process session_id from exec_command"), "chars": Prop("string", "Input bytes"), "yield_time_ms": limited("integer", "Longest wait for output, default 1000, max 20000", 0, maxPollWait), "return_on": enum("timeout (default) waits the full time unless the process exits; output returns as soon as new output arrives, a long poll for following logs", "timeout", "output"), "terminate": Prop("boolean", "Cancel process"), "close_stdin": Prop("boolean", "Close stdin")}, "session_id")}, Run: p.tagged(p.input)})
 }
 
 // commandEnv keeps secrets out of children but gives them a usable PATH: apps
@@ -444,6 +448,9 @@ func (p *Processes) start(ctx context.Context, in Invocation) (Output, error) {
 		out.Completion = func() (any, error) {
 			<-pr.done
 			value := processSnapshot(pr, id)
+			if pr.terminated.Load() {
+				return value, nil
+			}
 			if pr.cancelled {
 				return value, context.Canceled
 			}
@@ -481,6 +488,13 @@ func (p *Processes) input(ctx context.Context, in Invocation) (Output, error) {
 		return Output{}, &ToolError{"session_not_found", "process session not found"}
 	}
 	if a.Terminate {
+		// Mark the kill as requested before cancelling, unless the process has
+		// already ended on its own (its real exit status then stands).
+		select {
+		case <-pr.done:
+		default:
+			pr.terminated.Store(true)
+		}
 		pr.cancel()
 	}
 	if a.Chars != "" {
@@ -564,9 +578,15 @@ func poll(ctx context.Context, pr *process, id string, yield int, onOutput bool)
 	out := Output{Value: value, TextKeys: []string{"stdout", "stderr"}}
 	var err error
 	if finished {
-		value["exit_code"] = pr.code
 		value["timed_out"] = pr.timedOut
+		if pr.terminated.Load() {
+			value["terminated"] = true
+		} else {
+			value["exit_code"] = pr.code
+		}
 		switch {
+		case pr.terminated.Load():
+			// Requested by the agent: a normal result, not an error.
 		case pr.cancelled:
 			err = context.Canceled
 		case pr.timedOut:
@@ -637,6 +657,8 @@ func processText(v map[string]any) string {
 	}
 	if v["running"] == true {
 		fmt.Fprintf(&b, "[running %s; %s output so far, last output %s ago; session_id=%v; poll or answer it with write_stdin]\n", humanDuration(asInt64(v["elapsed_ms"])), humanSize(asInt64(v["output_bytes"])), humanDuration(asInt64(v["idle_ms"])), v["session_id"])
+	} else if v["terminated"] == true {
+		b.WriteString("[terminated at your request]\n")
 	} else if code, ok := v["exit_code"]; ok {
 		if v["timed_out"] == true {
 			b.WriteString("[timed out]\n")
@@ -655,9 +677,13 @@ func processSnapshot(pr *process, id string) map[string]any {
 	select {
 	case <-pr.done:
 		value["running"] = false
-		value["exit_code"] = pr.code
 		value["timed_out"] = pr.timedOut
-		value["cancelled"] = pr.cancelled
+		if pr.terminated.Load() {
+			value["terminated"] = true
+		} else {
+			value["exit_code"] = pr.code
+			value["cancelled"] = pr.cancelled
+		}
 	default:
 	}
 	return value
@@ -699,9 +725,13 @@ func taskInfo(id string, pr *process) map[string]any {
 	addProgress(v, pr, finished)
 	addPaths(v, pr)
 	if finished {
-		v["exit_code"] = pr.code
 		v["timed_out"] = pr.timedOut
-		v["cancelled"] = pr.cancelled
+		if pr.terminated.Load() {
+			v["terminated"] = true
+		} else {
+			v["exit_code"] = pr.code
+			v["cancelled"] = pr.cancelled
+		}
 		v["ended_ago_ms"] = time.Since(pr.ended).Milliseconds()
 	}
 	return v
@@ -737,6 +767,9 @@ func taskLine(t map[string]any) string {
 		state = fmt.Sprintf("exited %v after %s", t["exit_code"], humanDuration(asInt64(t["elapsed_ms"])))
 		if t["timed_out"] == true {
 			state = "timed out after " + humanDuration(asInt64(t["elapsed_ms"]))
+		}
+		if t["terminated"] == true {
+			state = "terminated after " + humanDuration(asInt64(t["elapsed_ms"]))
 		}
 		detail = fmt.Sprintf("%s output, finished %s ago", humanSize(asInt64(t["output_bytes"])), humanDuration(asInt64(t["ended_ago_ms"])))
 	}

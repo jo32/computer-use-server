@@ -155,7 +155,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		cancel()
 		notices := s.Registry.TakeNotices(sid)
-		notices = append(notices, s.Registry.ProgressFor(sid, p.Name)...)
+		notices = harness.WithoutOwn(append(notices, s.Registry.ProgressFor(sid, p.Name)...), out.Value)
 		if out.MCPResult != nil {
 			// Preserve content blocks, structuredContent and isError exactly.
 			if len(notices) > 0 {
@@ -221,7 +221,9 @@ func noticeText(events []harness.Event) string {
 			continue
 		}
 		fmt.Fprintf(&b, "[notice] background %v %v: %v", e.Data["tool"], e.Kind, e.Data["status"])
-		if code, ok := e.Data["exit_code"]; ok {
+		if e.Data["terminated"] == true {
+			b.WriteString(", terminated at the agent's request")
+		} else if code, ok := e.Data["exit_code"]; ok {
 			fmt.Fprintf(&b, ", exit code %v", code)
 		}
 		if id, ok := e.Data["session_id"]; ok {

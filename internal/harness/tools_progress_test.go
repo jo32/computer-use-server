@@ -147,3 +147,26 @@ func TestProgressListIsCapped(t *testing.T) {
 		t.Fatalf("%d events, last %v", len(got), got[len(got)-1].Data)
 	}
 }
+
+func TestResultsDoNotRepeatTheirOwnJob(t *testing.T) {
+	ev := func(kind, id string) Event { return Event{Kind: kind, Data: map[string]any{"session_id": id}} }
+	all := []Event{ev("task_progress", "a"), ev("task_finished", "a"), ev("task_progress", "b"), ev("task_finished", "b")}
+	cases := []struct {
+		name  string
+		value any
+		want  int
+	}{
+		{"result about a job that ended", map[string]any{"session_id": "a", "running": false}, 2},
+		{"result about a job still running", map[string]any{"session_id": "a", "running": true}, 3},
+		{"result about no job", map[string]any{"glob": 1}, 4},
+		{"not a map", "text", 4},
+	}
+	for _, c := range cases {
+		if got := WithoutOwn(all, c.value); len(got) != c.want {
+			t.Errorf("%s: kept %d, want %d", c.name, len(got), c.want)
+		}
+	}
+	if got := WithoutOwn(all, map[string]any{"session_id": "b", "running": false}); len(got) != 2 || got[0].Data["session_id"] != "a" {
+		t.Fatal("dropped the wrong job")
+	}
+}

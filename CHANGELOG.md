@@ -2,10 +2,17 @@
 
 Notable changes to ReadyRig are recorded here. For setup and current behavior, see the [README](README.md).
 
-## Unreleased
+## 0.6.12
+
+### Changed
+
+- Terminating a command with `write_stdin` and `terminate: true` now returns a normal result (`terminated: true`, no `exit_code`) instead of a `cancelled` error, and the original call is recorded as successful. Pause, Stop, and client cancellation are still cancellations.
+
+## 0.6.11
 
 ### Added
 
+- Exporting the call log shows progress and can be cancelled.
 - `edit_file` (exact-match replacement) and `glob`; `read_file` returns numbered, paged text and image files as images; `list_directory` gained `depth`, `pattern`, `type`, and `sort`; `search_files` gained regex, case-insensitive search, `include`, `context`, and paging. Recursive listings and searches honour `.gitignore`.
 - `exec_command` accepts `background`, `login_shell`, and timeouts up to four hours. Long output is returned as its start and end and saved in full for `read_file`. A background job that finishes is reported in the next result of the same session and on the optional MCP event stream.
 - `computer_action` accepts a chained `actions[]` batch, `triple_click`, `paste`, `wait`, held `modifiers`, and `element` targets; screenshots wait for the screen to settle. New tools: `computer_ui_tree`, `computer_app`, `computer_clipboard`. `computer_screenshot` can zoom into a region and choose a display.

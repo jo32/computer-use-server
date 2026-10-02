@@ -324,6 +324,27 @@ func (r *Registry) ProgressFor(session, tool string) []Event {
 	return out
 }
 
+// WithoutOwn drops events about the command session a result already
+// describes: progress for it, and its finish when the result says it ended.
+func WithoutOwn(events []Event, value any) []Event {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return events
+	}
+	id, _ := m["session_id"].(string)
+	if id == "" {
+		return events
+	}
+	out := make([]Event, 0, len(events))
+	for _, e := range events {
+		if sid, _ := e.Data["session_id"].(string); sid == id && (e.Kind == "task_progress" || m["running"] == false) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 // TakeNotices returns and clears the events held for a session.
 func (r *Registry) TakeNotices(session string) []Event {
 	r.mu.Lock()
@@ -663,7 +684,7 @@ func (r *Registry) follow(saved store.Call, out Output) {
 func finishedEvent(c store.Call, final any) Event {
 	data := map[string]any{"call_id": c.ID, "tool": c.Tool, "status": c.Status, "duration_ms": c.Duration}
 	if m, ok := final.(map[string]any); ok {
-		for _, k := range []string{"session_id", "exit_code", "timed_out", "cancelled", "stdout_path", "stderr_path"} {
+		for _, k := range []string{"session_id", "exit_code", "timed_out", "cancelled", "terminated", "stdout_path", "stderr_path"} {
 			if v, ok := m[k]; ok {
 				data[k] = v
 			}
