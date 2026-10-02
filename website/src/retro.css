@@ -1,0 +1,214 @@
+/* The home page in the style of the intro film: ivory 1984 Macintosh, one-bit System 1 windows, hard shadows.
+   Everything is scoped under .retro-site so the device console keeps its own look. It loads after styles.css and
+   works by redefining that file's color tokens, then reshaping the few surfaces that need more than a new color. */
+.retro-site {
+  --ink: #111;
+  --ink-shadow: #111;
+  --paper: #fff;
+  --led: #f5a623;
+  --pix: "Pixelify Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", ui-monospace, system-ui, sans-serif;
+  --mono-px: "VT323", "Monaco", ui-monospace, Menlo, monospace;
+  --bg: #d8d2c0;
+  --card: #fff;
+  --card-2: #f7f2e4;
+  --pill: #e8e0cb;
+  --pill-hover: #ddd3b9;
+  --line: #111;
+  --line-2: #c9bfa3;
+  --fg: #111;
+  --fg-2: #2d2b25;
+  --muted: #5a5444;
+  --faint: #6e6753;
+  --accent: #111;
+  --green: #17603f;
+  --amber: #7d4400;
+  --amber-soft: #f8e8bd;
+  --seg-thumb: #111;
+  --seg-edge: none;
+  --header-bg: #fff;
+  --primary: #111;
+  --primary-fg: #fff;
+  --window-shadow: 5px 5px 0 var(--ink-shadow);
+  --stripes: repeating-linear-gradient(to bottom, var(--line) 0 2px, var(--card) 2px 6px);
+  --dither: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'><rect width='2' height='2' fill='black' fill-opacity='.07'/><rect x='2' y='2' width='2' height='2' fill='black' fill-opacity='.07'/></svg>");
+  min-height: 100vh;
+  color: var(--fg);
+  background-color: var(--bg);
+  background-image: var(--dither);
+  color-scheme: light;
+}
+:root[data-theme="dark"] .retro-site {
+  --ink: #eee6d3;
+  --ink-shadow: #000;
+  --bg: #1c1a16;
+  --card: #27251f;
+  --card-2: #201e19;
+  --pill: #38342a;
+  --pill-hover: #45402f;
+  --line: #8f8870;
+  --line-2: #3d3a30;
+  --fg: #f1ead8;
+  --fg-2: #d4ccb6;
+  --muted: #b0a88f;
+  --faint: #9a937c;
+  --accent: #f5a623;
+  --green: #74d3a0;
+  --amber: #f2b544;
+  --amber-soft: #3f3220;
+  --seg-thumb: #eee6d3;
+  --header-bg: #27251f;
+  --primary: #eee6d3;
+  --primary-fg: #17150f;
+  --dither: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'><rect width='2' height='2' fill='white' fill-opacity='.035'/><rect x='2' y='2' width='2' height='2' fill='white' fill-opacity='.035'/></svg>");
+  color-scheme: dark;
+}
+html:has(.retro-site) { background: #d8d2c0; }
+:root[data-theme="dark"]:has(.retro-site) { background: #1c1a16; }
+
+/* One-bit corners: no rounding anywhere on the page. The film keeps its own, more specific radii. */
+.retro-site *, .retro-site *::before, .retro-site *::after { border-radius: 0; }
+.retro-site ::selection { background: var(--primary); color: var(--primary-fg); }
+.retro-site :is(a, button, select, summary, [tabindex]):focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+.retro-site :is(h1, h2, h3), .retro-site .wordmark, .retro-site .eyebrow, .retro-site .button, .retro-site .text-link, .retro-site .segmented > :is(button, a) { font-family: var(--pix); letter-spacing: 0; }
+
+/* Menu bar */
+.retro-site .site-header { background: var(--header-bg); border-bottom: 2px solid var(--line); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.retro-site .header-inner { height: 64px; }
+.retro-site .wordmark { font-size: 21px; font-weight: 700; }
+.retro-site .site-nav.segmented { background: none; border: 0; padding: 0; gap: 2px; }
+.retro-site .segmented { background: var(--card); border: 2px solid var(--line); padding: 3px; gap: 3px; }
+.retro-site .segmented > :is(button, a) { font-weight: 600; color: var(--fg); }
+.retro-site .segmented > :is(button, a):hover { background: var(--pill); color: var(--fg); }
+.retro-site .segmented > button[aria-selected="true"], .retro-site .segmented > a.active { background: var(--primary); color: var(--primary-fg); box-shadow: none; }
+.retro-site .segmented > button[aria-selected="true"] span { color: inherit; opacity: .8; }
+.retro-site .icon-button { color: var(--fg); }
+.retro-site .icon-button:hover { background: var(--primary); color: var(--primary-fg); }
+.retro-site .language-select { background: var(--card); border: 2px solid var(--line); font-family: var(--pix); font-weight: 600; }
+.retro-site .skip-link { border: 2px solid var(--line); }
+
+/* Buttons: ivory keys that press into their shadow */
+.retro-site .button { border: 2px solid var(--line); border-radius: 10px; box-shadow: 3px 3px 0 var(--ink-shadow); font-weight: 700; }
+.retro-site .button-primary { background: var(--primary); color: var(--primary-fg); }
+.retro-site .button-primary:hover { opacity: 1; background: var(--fg-2); }
+.retro-site .button-secondary { background: var(--card); }
+.retro-site .button:active { transform: translate(3px, 3px); box-shadow: none; }
+.retro-site .button-small { box-shadow: 2px 2px 0 var(--ink-shadow); }
+.retro-site .button-small:active { transform: translate(2px, 2px); }
+.retro-site .copy-button { border: 2px solid var(--line); border-radius: 6px; font-family: var(--pix); font-weight: 600; padding: 4px 8px; }
+.retro-site .copy-button:hover { background: var(--primary); color: var(--primary-fg); }
+.retro-site .text-link { font-weight: 600; border-bottom: 2px solid var(--line); padding-bottom: 1px; }
+.retro-site .text-link:hover { color: var(--fg); background: var(--pill); }
+
+/* Section titles: the eyebrow becomes a striped window title bar */
+.retro-site .eyebrow { display: flex; align-items: center; gap: 10px; width: fit-content; min-width: min(100%, 250px); max-width: 100%; height: 28px; padding: 0 10px; background: var(--card); border: 2px solid var(--line); color: var(--fg); font-size: 14px; font-weight: 700; line-height: 1; }
+.retro-site .eyebrow::before, .retro-site .eyebrow::after { content: ''; flex: 1; height: 12px; background: var(--stripes); min-width: 14px; }
+.retro-site .section-heading .eyebrow, .retro-site .platform-intro .eyebrow { margin-inline: auto; }
+.retro-site h2 { font-weight: 700; line-height: 1.35; }
+.retro-site h2 > span, .retro-site h1 > span { display: inline-block; background: var(--primary); color: var(--primary-fg); padding: 0 .22em; margin-top: .12em; }
+.retro-site .section-heading > p, .retro-site .hero-description { color: var(--muted); }
+.retro-site .section-heading > p { font-size: 16px; }
+
+/* Hero */
+.retro-site .hero { padding-top: 44px; }
+.retro-site h1 { font-weight: 700; line-height: 1.22; font-size: clamp(38px, 6vw, 72px); }
+.retro-site .hero-kicker { gap: 12px; padding: 5px 14px; background: var(--card); border: 2px solid var(--line); box-shadow: 3px 3px 0 var(--ink-shadow); font-family: var(--pix); font-size: 14px; letter-spacing: 0; color: var(--fg); margin-bottom: 24px; }
+.retro-site .hero-kicker span { color: var(--fg); font-weight: 700; }
+.retro-site .hero-kicker i, .retro-site .hero-meta i { width: 5px; height: 5px; background: var(--fg); }
+.retro-site .hero-meta { font-family: var(--mono-px); font-size: 19px; letter-spacing: .02em; color: var(--muted); margin-top: 20px; }
+.retro-site .hero-film { margin-top: 48px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.retro-site .hero-film .film { width: 100%; }
+.retro-site .hero-film-fallback { width: 100%; aspect-ratio: 1180 / 740; background: var(--card-2); border: 2px solid var(--line); box-shadow: 5px 5px 0 var(--ink-shadow); }
+.retro-site .hero-film-link { display: inline-flex; align-items: center; gap: 6px; font-family: var(--pix); font-weight: 600; font-size: 14px; border-bottom: 2px solid var(--line); padding-bottom: 1px; }
+.retro-site .hero-film-link:hover { background: var(--pill); }
+.retro-site .cloud-connection { margin-top: 56px; }
+
+/* Windows: every card is a System 1 window with a hard shadow */
+.retro-site :is(.connection-map, .cloud-onboarding, .use-case-panel, .sharing-card, .connection-example, .download-card, .cli-install, .preview-window, .agent-window) { background: var(--card); border: 2px solid var(--line); box-shadow: 5px 5px 0 var(--ink-shadow); }
+.retro-site .features-grid { gap: 2px; border: 2px solid var(--line); background: var(--line); box-shadow: 5px 5px 0 var(--ink-shadow); }
+.retro-site :is(.map-computer, .task-example, .sharing-controls, .feature-icon, .agent-result-file, .agent-connect-value, .agent-tool-calls, .agent-composer, .cli-install-command pre) { border-color: var(--line); }
+.retro-site :is(.task-example blockquote, .preview-stats, .preview-list, .agent-user-message) { border: 1px solid var(--line); }
+.retro-site .agent-user-message { background: var(--card); border: 2px solid var(--line); }
+.retro-site :is(.feature-tags > span, .small-tag, .agent-avatar) { border: 1px solid var(--line); background: var(--pill); color: var(--fg-2); }
+.retro-site .feature-icon { border-width: 2px; background: var(--pill); }
+.retro-site .feature-number { font-family: var(--mono-px); font-size: 18px; color: var(--muted); }
+.retro-site .feature h3, .retro-site .use-case-copy h3 { font-weight: 700; }
+.retro-site :is(.step-number, .cloud-start li > span, .task-example li > span) { border: 2px solid var(--line); background: var(--primary); color: var(--primary-fg); font-family: var(--mono-px); font-size: 18px; }
+.retro-site .cloud-start li > span { font-size: 17px; }
+.retro-site .steps li:not(:last-child)::after { width: 0; border-left: 3px dotted var(--line); background: none; left: 14px; }
+.retro-site .map-route i { height: 0; background: none; border-top: 3px dotted var(--line); margin-top: 10px; }
+.retro-site .map-route i::after { width: 8px; height: 8px; top: -6px; border-color: var(--line); border-width: 3px 3px 0 0; }
+.retro-site .map-route > span { color: var(--muted); }
+.retro-site .map-node > svg, .retro-site .map-computer > svg { color: var(--fg); }
+.retro-site .map-node strong, .retro-site .map-computer strong { font-family: var(--pix); font-weight: 700; }
+.retro-site .cloud-onboarding-heading h2 { font-size: 20px; }
+.retro-site .use-case-note { border-top: 2px dotted var(--line-2); }
+.retro-site .sharing-controls li + li { border-top: 2px dotted var(--line-2); }
+.retro-site .sharing-controls li > strong { font-family: var(--pix); }
+
+/* App preview and agent demo: striped title bars instead of traffic lights */
+.retro-site :is(.preview-chrome, .agent-window-chrome) { height: 36px; background: var(--stripes); border-bottom: 2px solid var(--line); font-family: var(--pix); font-weight: 700; font-size: 13px; }
+.retro-site .preview-chrome > span, .retro-site .agent-window-chrome > span:not(.agent-window-dots):not(.agent-demo-label) { background: var(--card); padding: 0 12px; line-height: 22px; }
+.retro-site .agent-demo-label { background: var(--card); padding: 0 8px; color: var(--muted); line-height: 20px; border: 1px solid var(--line); }
+.retro-site .traffic-lights, .retro-site .agent-window-dots { left: 12px; top: 10px; gap: 0; }
+.retro-site .agent-window-dots { top: auto; }
+.retro-site .traffic-lights i:nth-child(n + 2), .retro-site .agent-window-dots i:nth-child(n + 2) { display: none; }
+.retro-site .traffic-lights i, .retro-site .agent-window-dots i { width: 14px; height: 14px; background: var(--card); border: 2px solid var(--line); box-shadow: none; }
+.retro-site .preview-pause { right: 10px; background: var(--card); border: 2px solid var(--line); font-family: var(--pix); font-weight: 600; padding: 2px 8px; }
+.retro-site .preview-pause:hover { background: var(--primary); color: var(--primary-fg); }
+.retro-site .preview-pause.paused { color: var(--amber); }
+.retro-site .preview-pause.paused:hover { color: var(--primary-fg); }
+.retro-site .preview-tabs > .segmented { top: 44px; }
+.retro-site .preview-tabs { padding-top: 50px; }
+.retro-site .agent-window-chrome { background: var(--stripes); }
+.retro-site .preview-status i, .retro-site .agent-status-dot { width: 7px; height: 7px; }
+.retro-site .switch::before { border: 2px solid var(--line); background: var(--card); width: 33px; height: 20px; top: 5px; left: 3px; }
+.retro-site .switch > span { background: var(--primary); box-shadow: none; width: 12px; height: 12px; top: 9px; left: 7px; }
+.retro-site .switch.on::before { background: var(--primary); }
+.retro-site .switch.on > span { background: var(--primary-fg); transform: translateX(13px); }
+.retro-site .preview-paused-banner { border: 2px solid var(--line); }
+.retro-site .preview-stats strong { font-family: var(--mono-px); font-size: 30px; font-weight: 400; letter-spacing: 0; }
+.retro-site .preview-stats .stat-unit { font-family: var(--pix); }
+.retro-site .log-row:hover, .retro-site .log-row.is-expanded, .retro-site .project-row:hover, .retro-site .tool-preview-row:hover { background: var(--pill); }
+.retro-site .app-preview figcaption { font-family: var(--pix); font-weight: 600; }
+.retro-site .connection-content pre, .retro-site .task-example blockquote { background: var(--card-2); }
+.retro-site .code-toolbar { border-top: 2px solid var(--line); border-bottom: 2px solid var(--line); }
+.retro-site .code-footnote { border-top: 2px solid var(--line); }
+.retro-site .compatibility svg { color: var(--fg); }
+.retro-site .compatibility > div > span { font-family: var(--pix); font-weight: 600; letter-spacing: 0; }
+.retro-site .permission-note { padding: 12px 16px; border: 2px dashed var(--line); background: var(--card); }
+
+/* FAQ: a stack of ruled rows that invert when open */
+.retro-site .faq-list { border: 2px solid var(--line); background: var(--card); box-shadow: 5px 5px 0 var(--ink-shadow); }
+.retro-site .faq-list details { border-bottom: 2px solid var(--line); }
+.retro-site .faq-list details:last-child { border-bottom: 0; }
+.retro-site .faq-list summary { padding-inline: 18px; font-family: var(--pix); font-weight: 600; }
+.retro-site .faq-list summary:hover { color: var(--fg); background: var(--pill); }
+.retro-site .faq-list details[open] summary { background: var(--primary); color: var(--primary-fg); }
+.retro-site .faq-list summary svg, .retro-site .faq-list details[open] summary svg { color: inherit; }
+.retro-site .faq-list p { padding: 18px; }
+.retro-site .faq-list p > a { color: var(--fg); text-decoration-color: var(--fg); }
+
+/* Download */
+.retro-site .architecture-select select { border: 2px solid var(--line); background: var(--card); font-family: var(--pix); font-weight: 600; }
+.retro-site .download-meta, .retro-site .download-under { color: var(--muted); }
+.retro-site .download-under a:hover { color: var(--fg); background: var(--pill); }
+.retro-site .cli-install-command pre { background: var(--ink-shadow); color: var(--primary-fg); border: 2px solid var(--line); font-size: 13px; }
+:root[data-theme="dark"] .retro-site .cli-install-command pre { background: #000; color: #eee6d3; }
+
+/* Footer */
+.retro-site .site-footer { margin-top: 90px; border-top: 2px solid var(--line); }
+.retro-site .site-footer nav a { font-family: var(--pix); font-weight: 600; }
+.retro-site .site-footer nav a:hover { background: var(--primary); color: var(--primary-fg); }
+.retro-site .footer-tagline, .retro-site .footer-copyright { color: var(--muted); }
+
+@media (max-width: 1000px) {
+  .retro-site .header-menu { border-top: 2px solid var(--line); }
+  .retro-site .site-nav { border: 2px solid var(--line); padding: 3px; background: var(--card); }
+  .retro-site .header-inner { height: auto; }
+}
+@media (max-width: 680px) {
+  .retro-site .hero { padding-top: 30px; }
+  .retro-site .hero-film { margin-top: 34px; }
+  .retro-site .eyebrow { min-width: min(100%, 200px); font-size: 13px; }
+  .retro-site :is(.connection-map, .cloud-onboarding, .use-case-panel, .sharing-card, .connection-example, .download-card, .cli-install, .preview-window, .agent-window, .features-grid, .faq-list) { box-shadow: 4px 4px 0 var(--ink-shadow); }
+}

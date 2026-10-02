@@ -4,6 +4,7 @@ import App from './App'
 import CloudConsole from './CloudConsole'
 import { LanguageProvider } from './i18n'
 import './styles.css'
+import './retro.css'
 
 // The intro film carries its own markup, styles and fonts, so it loads only when someone opens /intro.
 const Intro = lazy(() => import('./Intro'))

@@ -1,5 +1,5 @@
 import { useI18n, translateData, LanguageSelect } from './i18n'
-import { useEffect, useId, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useId, useRef, useState } from 'react'
 import { AppIcon, GitHubIcon, Icon } from './components/Icon'
 import type { IconName } from './components/Icon'
 import { AppPreview, ConnectionExample } from './components/AppPreview'
@@ -7,6 +7,9 @@ import { UseCases } from './components/UseCases'
 import { CloudConnection, SharingSection } from './components/RemoteAccess'
 import { site } from './config'
 import { CopyButton } from './components/CopyButton'
+
+// The film brings its own markup and styles, so the hero loads it on demand.
+const Film = lazy(() => import('./intro/Film'))
 
 const featuresData: { number: string; icon: IconName; title: string; body: string; tags: string[] }[] = [
   {
@@ -52,7 +55,7 @@ function ThemeButton() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1a1a1e' : '#f4f4f6')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1c1a16' : '#d8d2c0')
   }, [theme])
 
   useEffect(() => {
@@ -221,7 +224,7 @@ export default function App() {
   const { t } = useI18n()
   const features = translateData(featuresData, t)
   return (
-    <>
+    <div className="retro-site">
       <a className="skip-link" href="#main">
         {t('跳到主要内容')}
       </a>
@@ -261,6 +264,15 @@ export default function App() {
               <i />
               <span>REST + MCP</span>
             </div>
+          </div>
+          <div className="hero-film">
+            <Suspense fallback={<div className="hero-film-fallback" aria-hidden="true" />}>
+              <Film />
+            </Suspense>
+            <a className="hero-film-link" href="/intro">
+              {t('观看开场短片')}
+              <Icon name="chevron" width="13" height="13" />
+            </a>
           </div>
           <CloudConnection />
         </section>
@@ -439,6 +451,6 @@ export default function App() {
         </nav>
         <span className="footer-copyright">© {new Date().getFullYear()}ReadyRig</span>
       </footer>
-    </>
+    </div>
   )
 }

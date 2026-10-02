@@ -1,6 +1,8 @@
 // Clock and sprites for the intro film. The markup lives in stage.html; every animation there is a CSS animation
 // that this module pauses and scrubs to the film clock, so play, pause and seek stay frame-accurate.
 
+import type { FilmLabels } from './film-text'
+
 const TOTAL = 99
 const FADE = 0.45
 const INK = '#111'
@@ -66,7 +68,7 @@ function clock(seconds: number): string {
 const easeOut = (p: number) => 1 - Math.pow(1 - p, 3)
 
 /** Starts the film inside `root` and returns a function that stops it. Safe to call twice (React StrictMode). */
-export function mountIntro(root: HTMLElement): () => void {
+export function mountIntro(root: HTMLElement, labels: FilmLabels = { play: 'Play', pause: 'Pause', replay: 'Replay' }): () => void {
   drawSprites(root)
   const scenes = Array.from(root.querySelectorAll<HTMLElement>('.scene'))
   const playButton = root.querySelector<HTMLButtonElement>('#pp')!
@@ -80,7 +82,7 @@ export function mountIntro(root: HTMLElement): () => void {
   let playing = !reduceMotion
   let last: number | null = null
   let frameId = 0
-  playButton.textContent = playing ? 'Pause' : 'Play'
+  playButton.textContent = playing ? labels.pause : labels.play
 
   function render() {
     for (const scene of scenes) {
@@ -118,7 +120,7 @@ export function mountIntro(root: HTMLElement): () => void {
       if (t >= TOTAL) {
         t = TOTAL - 0.01
         playing = false
-        playButton.textContent = 'Replay'
+        playButton.textContent = labels.replay
       }
     }
     last = now
@@ -129,11 +131,11 @@ export function mountIntro(root: HTMLElement): () => void {
   playButton.addEventListener('click', () => {
     if (!playing && t >= TOTAL - 0.05) t = 0
     playing = !playing
-    playButton.textContent = playing ? 'Pause' : 'Play'
+    playButton.textContent = playing ? labels.pause : labels.play
   }, { signal: stop.signal })
   seek.addEventListener('input', () => {
     t = Number(seek.value)
-    if (!playing) playButton.textContent = 'Play'
+    if (!playing) playButton.textContent = labels.play
     render()
   }, { signal: stop.signal })
 
