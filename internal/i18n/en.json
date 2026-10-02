@@ -1,4 +1,7 @@
 {
+  "添加项目目录": "Add project folder",
+  "添加目录": "Add folder",
+  "目录选择窗口已打开": "The folder picker is already open",
   "授权窗口已打开": "The authorization dialog is already open",
   "无法定位 Chrome 目录": "Cannot locate the Chrome folder",
   "授权 Chrome 调试入口": "Authorize Chrome debugging file",

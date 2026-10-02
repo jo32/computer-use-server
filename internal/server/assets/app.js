@@ -450,11 +450,19 @@ async function browseDirectory(path){
  }catch(e){if(version===directoryVersion){$('directory-browser').classList.add('hidden');$('project-error').textContent=e.message}}
 }
 function openProject(project){
+ if(!project&&new URLSearchParams(location.search).get('shell')==='darwin'){void addNativeProject();return}
  editingProject=project?.id||'';directoryVersion++;
  $('project-name').value=project?.name||'';$('project-path').value=project?.path||'';$('project-path').disabled=!!project;
  $('browse-directory').classList.toggle('hidden',!!project);$('directory-browser').classList.add('hidden');$('project-error').textContent='';
  $('project-dialog-title').textContent=project?t("重命名项目"):t("添加项目目录");$('save-project').textContent=project?t("保存名称"):t("添加目录");
  $('project-dialog').showModal();if(!project)void browseDirectory('');
+}
+async function addNativeProject(){
+ const button=$('add-project');if(button.disabled)return;button.disabled=true;
+ try{
+  const {path}=await api('/api/window/select-directory',{});if(!path)return;
+  await api('/api/projects',{action:'add',path});toast(t("目录已添加"));await refresh();
+ }catch(e){toast(e.message)}finally{button.disabled=false}
 }
 $('add-project').onclick=()=>openProject();$('close-project').onclick=()=>$('project-dialog').close();
 $('browse-directory').onclick=()=>browseDirectory($('project-path').value);

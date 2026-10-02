@@ -219,6 +219,7 @@ const readyRigEnglish = {
   "此目录没有子目录，可以直接添加。": "This folder has no subfolders. You can add it directly.",
   "重命名项目": "Rename project",
   "添加项目目录": "Add project folder",
+  "目录选择窗口已打开": "The folder picker is already open",
   "保存名称": "Save name",
   "添加目录": "Add folder",
   "项目已重命名": "Project renamed",

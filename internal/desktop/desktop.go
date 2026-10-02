@@ -31,9 +31,35 @@ func Run(handler http.Handler, registry *harness.Registry, updates *update.Manag
 	defer stop()
 	var showMain func()
 	var app *application.App
+	var window *application.WebviewWindow
 	var authorizing atomic.Bool
+	var choosingDirectory atomic.Bool
 	// This endpoint only exists in the native webview, never in the public gateway.
 	native := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/window/select-directory" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			if !choosingDirectory.CompareAndSwap(false, true) {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": tr("目录选择窗口已打开")})
+				return
+			}
+			defer choosingDirectory.Store(false)
+			home, _ := os.UserHomeDir()
+			application.InvokeSync(showMain)
+			chosen, err := app.Dialog.OpenFile().AttachToWindow(window).SetTitle(tr("添加项目目录")).SetButtonText(tr("添加目录")).SetDirectory(home).CanChooseFiles(false).CanChooseDirectories(true).PromptForSingleSelection()
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": tr("无法打开系统文件选择器")})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"path": chosen})
+			return
+		}
 		if r.URL.Path == "/api/window/open-url" && r.Method == http.MethodPost {
 			var in struct {
 				URL string `json:"url"`
@@ -131,7 +157,7 @@ func Run(handler http.Handler, registry *harness.Registry, updates *update.Manag
 		handler.ServeHTTP(w, r)
 	})
 	app = application.New(application.Options{Name: "ReadyRig", Description: "Local Agent Adapter", Icon: brand.AppIcon(256), Assets: application.AssetOptions{Handler: native}, PostShutdown: func() { stop(); shutdown() }})
-	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
+	window = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: tr("ReadyRig · 本地 Agent 控制台"), Width: 1320, Height: 860, MinWidth: 860, MinHeight: 600,
 		URL: "/?shell=" + runtime.GOOS,
 		Mac: application.MacWindow{TitleBar: application.MacTitleBarHiddenInset},
