@@ -481,5 +481,12 @@
   "电脑需在线并开启公网分享。连接后，助手可调用你已开启的电脑工具。": "Keep your computer online with public sharing enabled. Your assistant can use the computer tools you have enabled.",
   "手动配置客户端": "Set up a client manually",
   "仅适用于要求填写 Client ID 和 secret 的客户端。Gemini Spark 可直接使用快捷连接。": "For clients that require a Client ID and secret. Use Quick connect for Gemini Spark.",
-  "可随时在授权管理中断开连接": "Disconnect at any time in Manage access"
+  "可随时在授权管理中断开连接": "Disconnect at any time in Manage access",
+  "请帮我在你当前使用的 AI 客户端中配置 ReadyRig MCP。\n\n服务器名称：ReadyRig\nMCP 地址：{0}\n传输方式：Streamable HTTP\n认证方式：OAuth，支持自动发现和动态客户端注册（DCR）。\n\n请先检查当前客户端的 MCP 配置方式。若你有配置权限，请添加此服务器，保留现有的其他连接，并避免重复添加。使用客户端支持的 OAuth 登录流程，让我在浏览器中登录 ReadyRig 并确认授权；不要要求我在聊天中粘贴密码、令牌或 client secret。\n\n如果你不能修改配置或客户端不支持该连接，请明确说明，并给出该客户端的具体设置步骤。支持自动注册时无需手动填写 Client ID 或 secret；只有客户端要求时才使用 ReadyRig 的“手动配置”。\n\n连接后，请实际调用 list_computers 验证访问，并告诉我连接结果及电脑在线状态。不要仅凭保存配置就声称连接成功，也不要在本次配置中更改电脑权限或公网分享设置。": "Please configure the ReadyRig MCP server in the AI client you are currently using.\n\nServer name: ReadyRig\nMCP URL: {0}\nTransport: Streamable HTTP\nAuthentication: OAuth with automatic discovery and dynamic client registration (DCR).\n\nFirst check how this client configures MCP servers. If you can configure it, add this server while preserving other connections and avoiding duplicates. Use the client’s supported OAuth sign-in flow so I can sign in to ReadyRig in my browser and approve access; do not ask me to paste passwords, tokens, or a client secret into chat.\n\nIf you cannot change the configuration or the client does not support this connection, explain the limitation and provide specific setup steps for this client. With automatic registration, no manual Client ID or secret is needed; use ReadyRig’s Manual setup only if the client requires it.\n\nAfter connecting, actually call list_computers to verify access and report the connection result and computer online status. Do not claim success just because the configuration was saved, and do not change computer permissions or public sharing settings during this setup.",
+  "让助手帮你配置": "Let your assistant set it up",
+  "复制这段提示词，发送给你的 AI 助手。助手会配置连接，或指导你完成设置；登录授权仍由你确认。": "Copy this prompt and send it to your AI assistant. It will configure the connection or guide you through setup. You’ll still confirm sign-in and access.",
+  "复制配置提示词": "Copy setup prompt",
+  "查看提示词": "View prompt",
+  "配置提示词": "Setup prompt",
+  "正在加载 MCP 地址…": "Loading MCP URL…"
 }

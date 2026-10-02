@@ -7,3 +7,7 @@ export function publicConnectionPrompt(gateway: string, mode: string | undefined
   const guidance = t(mode === 'fixed' ? "这是固定公网地址；仅在 ReadyRig 开启固定链接分享时可用。如果连接失败，请让我确认应用和公网分享正在运行。" : "这是临时公网地址；如果连接失败或地址失效，请让我确认公网分享已开启并重新复制 Prompt。")
   return t(promptTemplate, { 0: gateway, 1: guidance, 2: gateway, 3: gateway, 4: gateway, 5: gateway, 6: gateway })
 }
+
+export function mcpSetupPrompt(url: string, t: Translate): string {
+  return t("请帮我在你当前使用的 AI 客户端中配置 ReadyRig MCP。\n\n服务器名称：ReadyRig\nMCP 地址：{0}\n传输方式：Streamable HTTP\n认证方式：OAuth，支持自动发现和动态客户端注册（DCR）。\n\n请先检查当前客户端的 MCP 配置方式。若你有配置权限，请添加此服务器，保留现有的其他连接，并避免重复添加。使用客户端支持的 OAuth 登录流程，让我在浏览器中登录 ReadyRig 并确认授权；不要要求我在聊天中粘贴密码、令牌或 client secret。\n\n如果你不能修改配置或客户端不支持该连接，请明确说明，并给出该客户端的具体设置步骤。支持自动注册时无需手动填写 Client ID 或 secret；只有客户端要求时才使用 ReadyRig 的“手动配置”。\n\n连接后，请实际调用 list_computers 验证访问，并告诉我连接结果及电脑在线状态。不要仅凭保存配置就声称连接成功，也不要在本次配置中更改电脑权限或公网分享设置。", { 0: url })
+}

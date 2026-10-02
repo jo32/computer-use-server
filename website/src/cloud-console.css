@@ -755,3 +755,7 @@
   .cloud-mcp-footer { padding: 10px 24px; }
   .cloud-mcp-field textarea { min-height: 70px; height: 70px; }
 }
+
+.cloud-mcp-prompt { padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
+.cloud-mcp-prompt details { margin-top: 14px; }
+.cloud-mcp-prompt summary { cursor: pointer; color: var(--muted); font-size: 12px; }
