@@ -375,3 +375,257 @@ test('Bearer controls validate bodies and preserve retries even at the shared qu
   assert.equal((await call(path, 'POST', input, token.headers)).response.status, 401)
   assert.equal((await call(path, 'GET', undefined, token.headers)).response.status, 401)
 })
+
+// OAuth clients are account-owned and separate from both Google login and device credentials.
+const callback = 'https://client.example/oauth/callback'
+async function newMCPClient() {
+  const { response, result } = await call('/api/mcp/clients', 'POST', { name: 'Test MCP', redirect_uris: [callback] }, owner())
+  assert.equal(response.status, 201)
+  return result as { client_id: string; client_secret: string }
+}
+async function form(path: string, input: Record<string, string>, headers: Record<string, string> = {}) {
+  const response = await worker.fetch(new Request(origin + path, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams(input) }), env)
+  return { response, result: response.headers.get('content-type')?.includes('application/json') ? await response.json() as any : null }
+}
+async function startMCP(clientID: string, overrides: Record<string, string> = {}) {
+  const verifier = randomToken()
+  const { challenge } = await import('../src/mcp-oauth.ts')
+  const params = new URLSearchParams({ client_id: clientID, redirect_uri: callback, response_type: 'code', resource: origin + '/mcp', scope: 'computers:control', state: 'original-state', code_challenge: await challenge(verifier), code_challenge_method: 'S256', ...overrides })
+  return { ...(await call('/oauth/authorize?' + params)), verifier }
+}
+async function mcpCode(clientID: string, who = owner()) {
+  const { response, verifier } = await startMCP(clientID)
+  assert.equal(response.status, 302)
+  const path = response.headers.get('location')!
+  const consent = await worker.fetch(new Request(origin + path, { headers: who }), env)
+  assert.equal(consent.status, 200)
+  assert.equal(consent.headers.get('Referrer-Policy'), 'same-origin')
+  assert.ok(consent.headers.get('Content-Security-Policy')!.includes("form-action 'self'"))
+  const csrf = /name="csrf" value="([^"]+)"/.exec(await consent.text())![1]
+  const approved = await form(path, { csrf, decision: 'allow' }, who)
+  assert.equal(approved.response.status, 200)
+  const target = new URL(/href="([^"]+)"/.exec(await approved.response.text())![1].replaceAll('&amp;', '&'))
+  assert.equal(target.origin + target.pathname, callback)
+  assert.equal(target.searchParams.get('state'), 'original-state')
+  return { code: target.searchParams.get('code')!, code_verifier: verifier }
+}
+async function mcpToken(client: Record<string, string>, who = owner()) {
+  const code = await mcpCode(client.client_id, who)
+  const { response, result } = await form('/oauth/token', { ...client, ...code, grant_type: 'authorization_code', redirect_uri: callback, resource: origin + '/mcp' })
+  assert.equal(response.status, 200)
+  return result as { access_token: string; refresh_token: string }
+}
+const rpc = (token: string, method: string, params: unknown = {}) => call('/mcp', 'POST', { jsonrpc: '2.0', id: 1, method, params }, { Authorization: 'Bearer ' + token })
+
+test('MCP discovery advertises OAuth and rejects unrelated credentials and hosts', async () => {
+  const response = (await call('/mcp')).response
+  assert.equal(response.status, 401)
+  assert.equal(response.headers.get('WWW-Authenticate'), `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="computers:control"`)
+  for (const path of ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp']) {
+    const { result } = await call(path)
+    assert.equal(result.resource, origin + '/mcp'); assert.deepEqual(result.authorization_servers, [origin])
+  }
+  const metadata = (await call('/.well-known/oauth-authorization-server')).result
+  assert.equal(metadata.authorization_endpoint, origin + '/oauth/authorize')
+  assert.deepEqual(metadata.code_challenge_methods_supported, ['S256'])
+  const device = await register()
+  const discovery = (await call('/api/discovery-token', 'POST', {}, owner())).result.token
+  for (const token of [session, device.token, discovery]) assert.equal((await rpc(token, 'tools/list')).response.status, 401)
+  for (const path of ['/mcp', '/oauth/token', '/.well-known/oauth-authorization-server']) assert.equal((await worker.fetch(new Request('https://evil.example' + path), env)).status, 400)
+})
+
+test('MCP registration requires same-origin login, exact safe callbacks, and only returns secret once', async () => {
+  const input = { name: 'Client', redirect_uris: [callback] }
+  assert.equal((await call('/api/mcp/clients', 'POST', input)).response.status, 403)
+  assert.equal((await call('/api/mcp/clients', 'POST', input, { ...owner(), Origin: 'https://evil.example' })).response.status, 403)
+  for (const uri of ['http://remote.example/cb', 'https://example.com/#frag', 'https://user:pass@example.com/cb', 'javascript:alert(1)', 'https://example.com/*', 'invalid']) assert.equal((await call('/api/mcp/clients', 'POST', { ...input, redirect_uris: [uri] }, owner())).response.status, 400)
+  const client = await newMCPClient()
+  assert.equal(db.prepare('SELECT secret_hash FROM mcp_clients WHERE id=?').get(client.client_id)!.secret_hash, await hash(client.client_secret))
+  const listed = (await call('/api/mcp/clients', 'GET', undefined, owner())).result
+  assert.equal(listed.clients.length, 1); assert.ok(!JSON.stringify(listed).includes(client.client_secret)); assert.equal(listed.clients[0].secret_hash, undefined)
+  assert.equal((await call('/api/mcp/clients', 'GET', undefined, secondOwner())).result.clients.length, 0)
+  await call('/api/mcp/clients/' + client.client_id, 'DELETE', undefined, secondOwner())
+  assert.ok(db.prepare('SELECT id FROM mcp_clients WHERE id=?').get(client.client_id))
+})
+
+test('OAuth requires PKCE, audience, exact redirect and explicit account-bound consent with CSRF', async () => {
+  const client = await newMCPClient()
+  for (const overrides of [{ redirect_uri: callback + '/other' }, { code_challenge_method: 'plain' }, { resource: 'https://evil.example/mcp' }, { response_type: 'token' }, { scope: 'admin' }]) {
+    const response = (await startMCP(client.client_id, overrides)).response
+    assert.equal(response.status, 400); assert.equal(response.headers.get('location'), null)
+  }
+  const start = await startMCP(client.client_id), path = start.response.headers.get('location')!
+  const loggedOut = (await call(path)).response
+  assert.ok(loggedOut.headers.get('location')!.startsWith('/auth/google?return_to='))
+  const google = (await call(loggedOut.headers.get('location')!)).response
+  const googleState = new URL(google.headers.get('location')!).searchParams.get('state')!
+  assert.equal(db.prepare('SELECT return_to FROM oauth_states WHERE id=?').get(googleState)!.return_to, path)
+  assert.equal((await call(path, 'GET', undefined, secondOwner())).response.status, 403)
+  const consent = await worker.fetch(new Request(origin + path, { headers: owner() }), env)
+  const csrf = /name="csrf" value="([^"]+)"/.exec(await consent.text())![1]
+  assert.equal((await form(path, { csrf: 'wrong', decision: 'allow' }, owner())).response.status, 403)
+  assert.equal((await form(path, { csrf, decision: 'allow' }, { ...owner(), Origin: 'https://evil.example' })).response.status, 403)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mcp_codes').get()!.n, 0)
+  const denied = await form(path, { csrf, decision: 'deny' }, owner())
+  assert.equal(new URL(/href="([^"]+)"/.exec(await denied.response.text())![1].replaceAll('&amp;', '&')).searchParams.get('error'), 'access_denied')
+  assert.equal((await form(path, { csrf, decision: 'allow' }, owner())).response.status, 400)
+})
+
+test('OAuth code exchange binds secret, verifier, callback and resource, and consumes code once', async () => {
+  const client = await newMCPClient(), code = await mcpCode(client.client_id)
+  const input = { ...client, ...code, grant_type: 'authorization_code', redirect_uri: callback, resource: origin + '/mcp' }
+  for (const overrides of [{ client_secret: 'wrong' }, { code_verifier: randomToken() }, { redirect_uri: callback + '/' }, { resource: origin + '/other' }]) assert.notEqual((await form('/oauth/token', { ...input, ...overrides })).response.status, 200)
+  const { client_id, client_secret, ...basicInput } = input
+  const results = await Promise.all([form('/oauth/token', basicInput, { Authorization: 'Basic ' + btoa(client_id + ':' + client_secret) }), form('/oauth/token', input)])
+  assert.equal(results.filter(r => r.response.status === 200).length, 1)
+  assert.equal((await form('/oauth/token', input)).result.error, 'invalid_grant')
+  const tokens = results.find(r => r.response.status === 200)!.result
+  const grant = db.prepare('SELECT * FROM mcp_grants').get()!
+  assert.equal(grant.access_hash, await hash(tokens.access_token)); assert.equal(grant.refresh_hash, await hash(tokens.refresh_token))
+  const next = await mcpCode(client.client_id)
+  db.prepare('UPDATE mcp_codes SET expires_at=?').run(timestamp() - 1)
+  assert.equal((await form('/oauth/token', { ...input, ...next })).result.error, 'invalid_grant')
+})
+
+test('OAuth MCP lists only owned computers and shares validated idempotent controls', async () => {
+  const device = await register(), client = await newMCPClient(), tokens = await mcpToken(client)
+  await call('/api/agent/heartbeat', 'POST', { snapshot }, device.headers)
+  const init = (await rpc(tokens.access_token, 'initialize', { protocolVersion: '2025-06-18' })).result
+  assert.equal(init.result.protocolVersion, '2025-06-18')
+  assert.equal((await rpc(tokens.access_token, 'tools/list')).result.result.tools.length, 6)
+  const listed = (await rpc(tokens.access_token, 'tools/call', { name: 'list_computers' })).result
+  assert.equal(JSON.parse(listed.result.content[0].text).computers[0].id, device.id)
+  db.prepare('UPDATE devices SET user_id=? WHERE id=?').run('bob', device.id)
+  const forbidden = (await rpc(tokens.access_token, 'tools/call', { name: 'get_computer', arguments: { computer_id: device.id } })).result
+  assert.equal(forbidden.result.isError, true)
+  db.prepare('UPDATE devices SET user_id=? WHERE id=?').run('alice', device.id)
+  const args = { computer_id: device.id, kind: 'control.pause', payload: { paused: true }, request_id: randomToken() }
+  const run = () => rpc(tokens.access_token, 'tools/call', { name: 'control_computer', arguments: args })
+  const first = (await run()).result, second = (await run()).result
+  assert.equal(first.result.isError, false); assert.deepEqual(first, second)
+  assert.equal((await call('/api/agent/heartbeat', 'POST', { snapshot }, device.headers)).result.command.kind, 'control.pause')
+  const invalid = (await rpc(tokens.access_token, 'tools/call', { name: 'control_computer', arguments: { ...args, kind: 'shell.exec' } })).result
+  assert.equal(invalid.result.isError, true)
+  assert.equal((await call('/api/devices', 'GET', undefined, { Authorization: 'Bearer ' + tokens.access_token })).response.status, 401)
+  assert.equal((await call('/mcp', 'POST', {}, { Authorization: 'Bearer ' + tokens.access_token, Origin: 'https://evil.example' })).response.status, 403)
+  assert.equal((await rpc(tokens.access_token, 'tools/call', { name: 'list_computers', arguments: { unexpected: true } })).result.error.code, -32602)
+})
+
+test('MCP token expiry, refresh rotation, logout persistence and client revocation', async () => {
+  const client = await newMCPClient(), tokens = await mcpToken(client)
+  db.prepare('UPDATE mcp_grants SET access_expires_at=?').run(timestamp() - 1)
+  assert.equal((await rpc(tokens.access_token, 'ping')).response.status, 401)
+  const input = { ...client, grant_type: 'refresh_token', refresh_token: tokens.refresh_token, resource: origin + '/mcp' }
+  const refreshed = await form('/oauth/token', input)
+  assert.equal(refreshed.response.status, 200)
+  assert.equal((await rpc(tokens.access_token, 'ping')).response.status, 401)
+  assert.equal((await rpc(refreshed.result.access_token, 'ping')).response.status, 200)
+  // Persistent authorization does not depend on the login session.
+  await call('/api/logout', 'POST', {}, owner())
+  assert.equal((await rpc(refreshed.result.access_token, 'ping')).response.status, 200)
+  db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(await hash(session), 'alice', timestamp() + 600)
+  await call('/api/mcp/clients/' + client.client_id, 'DELETE', undefined, owner())
+  assert.equal((await rpc(refreshed.result.access_token, 'ping')).response.status, 401)
+  assert.equal((await form('/oauth/token', { ...input, refresh_token: refreshed.result.refresh_token })).response.status, 401)
+})
+
+test('Spark automatic registration and query-resource token flow work without manual credentials', async () => {
+  const metadata = (await call('/.well-known/oauth-authorization-server')).result
+  assert.equal(metadata.registration_endpoint, origin + '/oauth/register')
+  const registration = await call('/oauth/register', 'POST', { client_name: 'Google', redirect_uris: [callback, 'https://oauth-redirect.googleusercontent.com/r/test-project'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] })
+  assert.equal(registration.response.status, 201)
+  assert.equal(registration.result.client_secret, undefined)
+  const clientID = registration.result.client_id
+  assert.equal(db.prepare('SELECT user_id FROM mcp_clients WHERE id=?').get(clientID)!.user_id, null)
+  assert.equal((await call('/api/mcp/clients', 'GET', undefined, owner())).result.clients.length, 0)
+  const code = await mcpCode(clientID)
+  const input = { client_id: clientID, ...code, redirect_uri: callback, grant_type: 'authorization_code' }
+  assert.equal((await form('/oauth/token?resource=' + encodeURIComponent(origin + '/other'), input)).result.error, 'invalid_target')
+  assert.equal((await form('/oauth/token?resource=' + encodeURIComponent(origin + '/mcp'), { ...input, resource: origin + '/other' })).result.error, 'invalid_target')
+  const exchange = await form('/oauth/token?resource=' + encodeURIComponent(origin + '/mcp'), input)
+  assert.equal(exchange.response.status, 200)
+  assert.equal((await rpc(exchange.result.access_token, 'initialize', { protocolVersion: '2025-11-25' })).result.result.protocolVersion, '2025-11-25')
+  const listed = (await call('/api/mcp/clients', 'GET', undefined, owner())).result.clients
+  assert.equal(listed.length, 1); assert.equal(listed[0].automatic, true)
+  const refresh = await form('/oauth/token?resource=' + encodeURIComponent(origin + '/mcp'), { client_id: clientID, grant_type: 'refresh_token', refresh_token: exchange.result.refresh_token })
+  assert.equal(refresh.response.status, 200)
+  const replay = await form('/oauth/token?resource=' + encodeURIComponent(origin + '/mcp'), { client_id: clientID, grant_type: 'refresh_token', refresh_token: exchange.result.refresh_token })
+  assert.equal(replay.result.error, 'invalid_grant')
+  assert.equal((await rpc(refresh.result.access_token, 'ping')).response.status, 401)
+  assert.equal((await form('/oauth/token', { client_id: clientID, grant_type: 'refresh_token', refresh_token: refresh.result.refresh_token, resource: origin + '/mcp' })).result.error, 'invalid_grant')
+})
+
+test('automatic clients isolate account grants; revocation does not disconnect other users', async () => {
+  const registration = (await call('/oauth/register', 'POST', { client_name: 'Google', redirect_uris: [callback], token_endpoint_auth_method: 'none' })).result
+  const client = { client_id: registration.client_id }
+  const alice = await mcpToken(client), bob = await mcpToken(client, secondOwner())
+  assert.equal((await call('/api/mcp/clients', 'GET', undefined, secondOwner())).result.clients.length, 1)
+  await call('/api/mcp/clients/' + client.client_id, 'DELETE', undefined, owner())
+  assert.equal((await rpc(alice.access_token, 'ping')).response.status, 401)
+  assert.equal((await rpc(bob.access_token, 'ping')).response.status, 200)
+  assert.equal((await call('/api/mcp/clients', 'GET', undefined, owner())).result.clients.length, 0)
+  assert.equal((await form('/oauth/revoke', { ...client, token: bob.refresh_token })).response.status, 200)
+  assert.equal((await rpc(bob.access_token, 'ping')).response.status, 401)
+  assert.equal((await form('/oauth/revoke', { ...client, token: 'unknown' })).response.status, 200)
+})
+
+test('DCR validates redirects, limits abuse and honors negotiated secret authentication', async () => {
+  for (const input of [{ redirect_uris: ['https://example.com/#'] }, { redirect_uris: [callback], token_endpoint_auth_method: 'client_secret_jwt' }, { redirect_uris: [callback], grant_types: ['client_credentials'] }, { redirect_uris: [callback], response_types: ['token'] }]) assert.equal((await call('/oauth/register', 'POST', input)).response.status, 400)
+  const client = (await call('/oauth/register', 'POST', { client_name: 'Google', redirect_uris: [callback] })).result
+  assert.equal(client.token_endpoint_auth_method, 'client_secret_basic')
+  assert.ok(client.client_secret)
+  const code = await mcpCode(client.client_id)
+  const input = { ...code, redirect_uri: callback, grant_type: 'authorization_code', resource: origin + '/mcp' }
+  assert.equal((await form('/oauth/token', { ...input, client_id: client.client_id, client_secret: client.client_secret })).response.status, 401)
+  const auth = { Authorization: 'Basic ' + btoa(client.client_id + ':' + client.client_secret) }
+  assert.equal((await form('/oauth/token', input, auth)).response.status, 200)
+  const postClient = (await call('/oauth/register', 'POST', { client_name: 'Google', redirect_uris: [callback], token_endpoint_auth_method: 'client_secret_post' })).result
+  assert.ok((await mcpToken({ client_id: postClient.client_id, client_secret: postClient.client_secret })).access_token)
+  for (let i = 0; i < 18; i++) assert.equal((await call('/oauth/register', 'POST', { redirect_uris: [callback] })).response.status, 201)
+  assert.equal((await call('/oauth/register', 'POST', { redirect_uris: [callback] })).response.status, 429)
+})
+
+test('cloud MCP relays enabled tools only to the current owned approved tunnel, preserving images and errors', async () => {
+  const device = await register(), client = await newMCPClient(), tokens = await mcpToken(client)
+  const ready = { ...snapshot, tunnel: { state: 'ready', gateway: 'https://owned-computer.trycloudflare.com/AB12cd34' } }
+  await call('/api/agent/heartbeat', 'POST', { snapshot: ready }, device.headers)
+  const originalFetch = globalThis.fetch
+  let requests: { url: string; init: RequestInit }[] = [], response: unknown = { call_id: 'example', result: { tools: [{ name: 'read_file' }] }, status: 'ok', error: '' }, status = 200
+  globalThis.fetch = async (url, init) => { requests.push({ url: String(url), init: init! }); return Response.json(response, { status }) }
+  const run = (name: string, args: Record<string, unknown>) => rpc(tokens.access_token, 'tools/call', { name, arguments: { computer_id: device.id, ...args } })
+  try {
+    const listed = (await run('list_computer_tools', {})).result.result
+    assert.equal(listed.isError, false)
+    assert.equal(requests[0].url, ready.tunnel.gateway + '/api/v1/tools/help')
+    const headers = new Headers(requests[0].init.headers)
+    assert.equal(headers.has('Authorization'), false); assert.equal(headers.has('Cookie'), false)
+    assert.ok(headers.get('X-Session-ID')!.startsWith('cloud-'))
+    assert.equal(requests[0].init.redirect, 'manual')
+    response = { call_id: 'screenshot', result: { screenshot: 'data:image/jpeg;base64,dGVzdA==', width: 10 }, status: 'ok' }
+    const screenshot = (await run('call_computer_tool', { tool_name: 'computer_screenshot', arguments: {} })).result.result
+    assert.equal(screenshot.content[0].type, 'image'); assert.equal(screenshot.content[0].data, 'dGVzdA==')
+    assert.equal(JSON.parse(screenshot.content[1].text).result.screenshot, undefined)
+    response = { result: { content: [{ type: 'image', mimeType: 'image/png', data: 'dGVzdA==' }], structuredContent: { node: 12 } }, status: 'ok' }
+    const chrome = (await run('call_computer_tool', { tool_name: 'chrome_take_screenshot', arguments: {} })).result.result
+    assert.equal(chrome.content[0].mimeType, 'image/png'); assert.equal(chrome.structuredContent.node, 12)
+    status = 423; response = { error: 'Capability disabled', status: 'denied' }
+    assert.equal((await run('call_computer_tool', { tool_name: 'exec_command', arguments: { command: 'pwd' } })).result.result.isError, true)
+    let previous = requests.length
+    await run('call_computer_tool', { tool_name: '../api/logout', arguments: {} })
+    assert.equal(requests.length, previous)
+    for (const invalid of [{ ...ready, paused: true }, { ...ready, tunnel: { state: 'stopped' } }, { ...ready, tunnel: { state: 'ready', gateway: 'https://127.0.0.1/AB12cd34' } }, { ...ready, tunnel: { state: 'ready', gateway: 'https://evil.example/AB12cd34' } }]) {
+      await call('/api/agent/heartbeat', 'POST', { snapshot: invalid }, device.headers)
+      assert.equal((await run('list_computer_tools', {})).result.result.isError, true)
+      assert.equal(requests.length, previous)
+    }
+    await call('/api/agent/heartbeat', 'POST', { snapshot: ready }, device.headers)
+    globalThis.fetch = async () => { requests.push({ url: 'failed', init: {} }); throw new Error('timeout') }
+    const timedOut = (await run('call_computer_tool', { tool_name: 'write_file', arguments: { path: 'example', content: 'test' } })).result.result
+    assert.equal(timedOut.isError, true); assert.match(timedOut.content[0].text, /may have occurred/)
+    assert.equal(requests.length, previous + 1)
+    globalThis.fetch = async () => new Response(null, { status: 302, headers: { Location: 'https://evil.example/' } })
+    assert.match((await run('list_computer_tools', {})).result.result.content[0].text, /redirected/)
+    db.prepare('UPDATE devices SET user_id=? WHERE id=?').run('bob', device.id)
+    assert.equal((await run('list_computer_tools', {})).result.result.isError, true)
+  } finally { globalThis.fetch = originalFetch }
+})

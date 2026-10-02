@@ -14,15 +14,15 @@ async function authenticate(req: Request, env: Env): Promise<ComputerCredential>
   if (!token) throw new HTTPError(401, '云端凭证已失效，请重新登录并复制云端 Prompt')
   return token
 }
-async function computers(env: Env, token: ComputerCredential): Promise<Computer[]> {
+export async function computers(env: Env, token: ComputerCredential): Promise<Computer[]> {
   return (await env.DB.prepare('SELECT d.id,d.name,d.platform,d.last_seen,d.snapshot FROM devices d WHERE d.user_id=? AND d.revoked_at IS NULL ORDER BY d.created_at DESC,d.id LIMIT 100').bind(token.user_id).all<Computer>()).results
 }
-async function computer(env: Env, token: ComputerCredential, id: string): Promise<Computer> {
+export async function computer(env: Env, token: ComputerCredential, id: string): Promise<Computer> {
   const d = await env.DB.prepare('SELECT d.id,d.name,d.platform,d.last_seen,d.snapshot FROM devices d WHERE d.id=? AND d.user_id=? AND d.revoked_at IS NULL').bind(id, token.user_id).first<Computer>()
   if (!d) throw new HTTPError(404, '找不到已授权的电脑')
   return d
 }
-function summary(d: Computer) {
+export function summary(d: Computer) {
   const snapshot = JSON.parse(d.snapshot), online = d.last_seen > now() - 60
   const tunnel = snapshot.tunnel || {}
   let links: { gateway: string; mcp: string; console: string } | null = null

@@ -143,3 +143,49 @@ node scripts/test-cloud.mjs       # Local Worker/D1 → Go app → harmless tunn
 Integration tests create temporary directories and local test users. They do not connect to production D1, open real public tunnels, or bypass production Google sign-in. Local ports 18787, 18789, 17431, and 17432 must be available. Add `--keep` to retain test pages for visual verification; cleanup occurs when the test stops.
 
 References: [Cloudflare Workers static assets](https://developers.cloudflare.com/workers/static-assets/), [D1](https://developers.cloudflare.com/d1/), and [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect).
+
+## Cloud MCP with OAuth
+
+In Gemini Spark, add `https://readyrig.getmegaportal.com/mcp` as the MCP server URL.
+Spark can register its OAuth client automatically; no Client ID or secret needs
+to be copied. Complete ReadyRig sign-in and review the browser consent page.
+The console’s **Connect MCP** dialog also provides optional manual registration
+for clients that require preconfigured credentials and exact redirect URLs.
+These credentials are issued by ReadyRig, separate from Google sign-in credentials.
+
+The endpoint implements stateless Streamable HTTP with JSON responses (authenticated
+GET returns 405), protected resource metadata at
+`/.well-known/oauth-protected-resource/mcp` and
+`/.well-known/oauth-protected-resource`, and authorization server metadata at
+`/.well-known/oauth-authorization-server`. Dynamic registration at `/oauth/register`
+accepts public clients and clients using `client_secret_post` or
+`client_secret_basic`. Registration is rate limited and grants no account access.
+Authorization requires explicit signed-in consent, an exact registered redirect
+URL, authorization code + S256 PKCE, and the `computers:control` scope.
+Both authorize and token requests require `resource` equal to the MCP URL;
+token requests may supply it in the query or form body.
+
+Access tokens last one hour; grants expire after 30 days. Refresh tokens rotate,
+and replay of an already used refresh token revokes its grant. Secrets, codes,
+tokens and consent CSRF values are stored as hashes. Website sign-out does not
+disconnect MCP. Revoke access in **Connect MCP** to invalidate your grants;
+revoking a dynamically registered client does not affect other users. Previously
+retrieved public computer URLs remain valid until public sharing stops.
+
+Cloud MCP exposes `list_computers`, `get_computer`, `computer_commands`,
+`control_computer`, `list_computer_tools`, and `call_computer_tool`. The first four
+use the cloud API’s account ownership checks and command queue. The last two
+relay tool discovery and execution to an owned, online computer with public
+sharing ready, so Spark can use computer tools through one cloud connection.
+Local capability switches, pause state, folder boundaries, Full Access and system
+permissions still apply. The cloud forwards arguments and results, including
+screenshots, but never forwards the cloud OAuth token to the computer.
+Calls are not retried automatically if execution has an uncertain outcome.
+
+The relay permits HTTPS `*.trycloudflare.com` gateways by default. For fixed
+tunnels, set the comma-separated `MCP_ALLOWED_TUNNEL_HOSTS` Worker variable to
+exact trusted hostnames. Redirects and arbitrary destination URLs are rejected.
+
+Apply `0003_mcp_oauth.sql` with `npm run db:remote` before deploying the Worker
+and website together with `npm run deploy`. Verify with `npm run check`,
+`npm test`, website checks/build, and `node scripts/test-cloud.mjs` from the root.

@@ -1,3 +1,6 @@
+import { oauthRoute } from './mcp-oauth.ts'
+import { manageClients } from './mcp-clients.ts'
+import { cloudMCP } from './mcp.ts'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { now, randomToken, hash, HTTPError, json, body, text } from './http.ts'
 import { computerAPI, issueDiscoveryToken } from './computer-discovery.ts'
@@ -10,6 +13,7 @@ export interface Env {
   ASSETS: Fetcher
   PUBLIC_ORIGIN: string
   LEGACY_ORIGIN?: string
+  MCP_ALLOWED_TUNNEL_HOSTS?: string
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
 }
@@ -61,14 +65,17 @@ async function route(req: Request, env: Env): Promise<Response> {
     // Keep existing device credentials working on the original deployment URL.
     // Browser sessions and OAuth always use the canonical domain.
     if (legacy && (req.method === 'GET' || req.method === 'HEAD')) return new Response(null, { status: 308, headers: { Location: env.PUBLIC_ORIGIN + path + url.search, 'Cache-Control': 'no-store' } })
-    if (!(legacy && req.method === 'POST' && path.startsWith('/api/agent/')) && (path.startsWith('/api/') || path.startsWith('/auth/'))) throw new HTTPError(400, '服务地址与 PUBLIC_ORIGIN 不一致')
+    if (!(legacy && req.method === 'POST' && path.startsWith('/api/agent/')) && (path.startsWith('/api/') || path.startsWith('/auth/') || path.startsWith('/oauth/') || path.startsWith('/.well-known/') || path === '/mcp')) throw new HTTPError(400, '服务地址与 PUBLIC_ORIGIN 不一致')
   }
+  if (path === '/mcp') return cloudMCP(req, env)
+  const oauth = await oauthRoute(req, env, () => user(req, env), () => hash(cookie(req, cookieName(env, 'session'))))
+  if (oauth) return oauth
   if (path === '/api/health' && req.method === 'GET') return json({ ok: true, google_configured: !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) })
   if (path === '/auth/google' && req.method === 'GET') {
     if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) throw new HTTPError(503, '管理员尚未配置 Google 登录')
     const state = randomToken(), browser = randomToken(), verifier = randomToken(), nonce = randomToken()
     const requested = url.searchParams.get('return_to') || '/console'
-    const returnTo = /^\/console(?:\?pair=[A-Za-z0-9_-]{43})?$/.test(requested) ? requested : '/console'
+    const returnTo = /^(?:\/console(?:\?pair=[A-Za-z0-9_-]{43})?|\/oauth\/consent\?request=[A-Za-z0-9_-]{43})$/.test(requested) ? requested : '/console'
     await env.DB.prepare('INSERT INTO oauth_states(id,browser_hash,verifier,nonce,return_to,expires_at) VALUES(?,?,?,?,?,?)').bind(state, await hash(browser), verifier, nonce, returnTo, now() + 600).run()
     const google = new URL('https://accounts.google.com/o/oauth2/v2/auth')
     google.search = new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, redirect_uri: env.PUBLIC_ORIGIN + '/auth/callback', response_type: 'code', scope: 'openid email profile', state, nonce, code_challenge: await pkce(verifier), code_challenge_method: 'S256', prompt: 'select_account' }).toString()
@@ -140,6 +147,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (path.startsWith('/api/')) {
     if (req.method !== 'GET') sameOrigin(req, env)
     const owner = await user(req, env)
+    if (path.startsWith('/api/mcp/')) return manageClients(req, env, owner)
     if (path === '/api/discovery-token' && req.method === 'POST') {
       await body(req)
       return issueDiscoveryToken(env, owner, await hash(cookie(req, cookieName(env, 'session'))))
@@ -187,13 +195,21 @@ export default {
     let response: Response
     try { response = await route(req, env) } catch (e) { response = e instanceof HTTPError ? json({ error: e.message }, e.status) : json({ error: '服务暂时不可用，请重试' }, 500) }
     const headers = new Headers(response.headers)
-    headers.set('X-Content-Type-Options', 'nosniff'); headers.set('Referrer-Policy', 'no-referrer'); headers.set('X-Frame-Options', 'DENY')
+    headers.set('X-Content-Type-Options', 'nosniff')
+    if (!headers.has('Referrer-Policy')) headers.set('Referrer-Policy', 'no-referrer')
+    headers.set('X-Frame-Options', 'DENY')
     const path = new URL(req.url).pathname
-    if (path.startsWith('/api/') || path.startsWith('/auth/')) headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+    if (path.startsWith('/oauth/') || path === '/mcp') console.info('mcp_http', JSON.stringify({ path, method: req.method, status: response.status }))
+    if (!headers.has('Content-Security-Policy') && (path.startsWith('/api/') || path.startsWith('/auth/') || path.startsWith('/oauth/') || path.startsWith('/.well-known/') || path === '/mcp')) headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
     return new Response(response.body, { status: response.status, headers })
   },
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
     await env.DB.batch([
+      env.DB.prepare('DELETE FROM mcp_registration_limits WHERE expires_at<?').bind(now()),
+      env.DB.prepare('DELETE FROM mcp_clients WHERE user_id IS NULL AND created_at<? AND NOT EXISTS(SELECT 1 FROM mcp_grants WHERE client_id=mcp_clients.id AND refresh_expires_at>?)').bind(now() - 86400, now()),
+      env.DB.prepare('DELETE FROM mcp_requests WHERE expires_at<?').bind(now()),
+      env.DB.prepare('DELETE FROM mcp_codes WHERE expires_at<?').bind(now()),
+      env.DB.prepare('DELETE FROM mcp_grants WHERE refresh_expires_at<?').bind(now()),
       env.DB.prepare('DELETE FROM sessions WHERE expires_at<?').bind(now()),
       env.DB.prepare('DELETE FROM oauth_states WHERE expires_at<?').bind(now()),
       env.DB.prepare('DELETE FROM pairings WHERE expires_at<?').bind(now()),

@@ -6,6 +6,7 @@ import { publicConnectionPrompt } from './connection-prompt'
 import { LanguageSelect, useI18n } from './i18n'
 import type { Locale } from './locale'
 import { api, APIError } from './cloud-api'
+import { CloudMCP } from './CloudMCP'
 import { CloudPromptButton } from './CloudPromptButton'
 import './cloud-console.css'
 
@@ -436,7 +437,7 @@ export default function CloudConsole() {
                   {t('{0} 台电脑 · {1} 在线', { 0: devices.length, 1: devices.filter((device) => device.online).length })}
                 </span>
               )}
-              <CloudPromptButton disabled={!devices.length} />
+              <div className="cloud-actions"><CloudPromptButton disabled={!devices.length} /><CloudMCP /></div>
             </div>
           </div>
         )}

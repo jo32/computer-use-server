@@ -2,6 +2,17 @@
 
 Notable changes to ReadyRig are recorded here. For setup and current behavior, see the [README](README.md).
 
+## 0.6.9
+
+### Added
+
+- Cloud MCP with OAuth authorization, automatic client registration, revocable access, and tool discovery and execution through an owned computer's public connection.
+- A Connect MCP dialog in the cloud console for connection details and client management.
+
+### Fixed
+
+- Adding a project folder in the macOS app now uses the system folder picker attached to the main window. Cancelling leaves project access unchanged and allows the picker to be opened again.
+
 ## 0.6.8
 
 ### Added
