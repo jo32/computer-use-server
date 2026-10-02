@@ -55,8 +55,9 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = locale
-    const title = t('ReadyRig — 一个 Agent，管理多台电脑')
-    const description = t('将 Mac、Linux 服务器和 VM 连接到同一个账号，让 Agent 查询电脑、选择环境，使用各自开放的文件、终端、浏览器和桌面工具。')
+    const intro = /^\/intro\/?$/.test(location.pathname)
+    const title = intro ? t('ReadyRig 开场短片') : t('ReadyRig — 一个 Agent，管理多台电脑')
+    const description = intro ? t('一部 99 秒的动画短片：ReadyRig 如何让云端 Agent 使用你的电脑。') : t('将 Mac、Linux 服务器和 VM 连接到同一个账号，让 Agent 查询电脑、选择环境，使用各自开放的文件、终端、浏览器和桌面工具。')
     document.title = title
     for (const selector of ['meta[property="og:title"]', 'meta[name="twitter:title"]']) document.querySelector(selector)?.setAttribute('content', title)
     for (const selector of ['meta[name="description"]', 'meta[property="og:description"]', 'meta[name="twitter:description"]'])

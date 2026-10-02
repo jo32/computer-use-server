@@ -430,6 +430,9 @@ export default function App() {
           <a href={site.releases} target="_blank" rel="noopener noreferrer">
             {t('版本发布')}
           </a>
+          <a href="/intro">
+            {t('观看开场短片')}
+          </a>
           <a href={site.repository} target="_blank" rel="noopener noreferrer">
             GitHub
           </a>

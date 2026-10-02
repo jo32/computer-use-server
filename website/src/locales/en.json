@@ -488,5 +488,10 @@
   "复制配置提示词": "Copy setup prompt",
   "查看提示词": "View prompt",
   "配置提示词": "Setup prompt",
-  "正在加载 MCP 地址…": "Loading MCP URL…"
+  "正在加载 MCP 地址…": "Loading MCP URL…",
+  "ReadyRig 开场短片": "ReadyRig intro film",
+  "一部 99 秒的动画短片：ReadyRig 如何让云端 Agent 使用你的电脑。": "A 99-second animated film on how ReadyRig lets a cloud agent use your computer.",
+  "返回官网": "Back to the website",
+  "观看开场短片": "Watch the intro film",
+  "短片的画面与字幕为英文。": "The film and its captions are in English."
 }

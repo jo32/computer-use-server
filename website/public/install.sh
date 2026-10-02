@@ -10,7 +10,8 @@ Install ReadyRig CLI:
 
 Options:
   --version VERSION   Stable release version (default: latest)
-  --install-dir PATH  Destination directory (default: ~/.local/bin)
+  --install-dir PATH  Destination directory (default: writable standard bin directory in PATH,
+                      falling back to ~/.local/bin)
   --repo OWNER/REPO   GitHub release repository (default: jo32/readyrig)
   --no-setup          Install only; skip the interactive configuration guide
   --help              Show this help
@@ -21,7 +22,9 @@ EOF
 fail() { printf 'ReadyRig: %s\n' "$*" >&2; exit 1; }
 
 version=${READYRIG_VERSION:-latest}
-install_dir=${READYRIG_INSTALL_DIR:-${HOME:?HOME must be set}/.local/bin}
+install_dir=${READYRIG_INSTALL_DIR:-}
+auto_install_dir=1
+[ -z "$install_dir" ] || auto_install_dir=0
 repo=${READYRIG_INSTALL_REPO:-jo32/readyrig}
 setup=1
 [ "${READYRIG_NO_SETUP:-0}" != 1 ] || setup=0
@@ -29,13 +32,27 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --version|--install-dir|--repo)
       [ "$#" -ge 2 ] || fail "$1 requires a value"
-      case "$1" in --version) version=$2;; --install-dir) install_dir=$2;; --repo) repo=$2;; esac
+      case "$1" in --version) version=$2;; --install-dir) install_dir=$2; auto_install_dir=0;; --repo) repo=$2;; esac
       shift 2;;
     --help|-h) usage; exit 0;;
     --no-setup) setup=0; shift;;
     *) fail "Unknown option: $1";;
   esac
 done
+if [ "$auto_install_dir" = 1 ]; then
+  # Prefer user-owned locations before a shared local bin directory. Do not
+  # install into OS-managed bins or arbitrary toolchain directories from PATH.
+  for candidate in "${HOME:?HOME must be set}/.local/bin" "$HOME/bin" /usr/local/bin; do
+    case ":${PATH:-}:" in
+      *":$candidate:"*)
+        if [ -d "$candidate" ] && [ -w "$candidate" ] && [ -x "$candidate" ]; then
+          install_dir=$candidate
+          break
+        fi;;
+    esac
+  done
+  install_dir=${install_dir:-$HOME/.local/bin}
+fi
 printf '%s\n' "$repo" | LC_ALL=C grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || fail 'Repository must be OWNER/REPO'
 [ -n "$install_dir" ] || fail 'Install directory cannot be empty'
 case "$install_dir" in /*) ;; *) install_dir="$(pwd)/$install_dir";; esac
@@ -64,6 +81,7 @@ asset="readyrig-web-$platform-$arch"
 base="https://github.com/$repo/releases/download/v$version"
 printf 'Installing ReadyRig %s (%s/%s)\n' "$version" "$platform" "$arch"
 mkdir -p "$install_dir"
+requested_install_dir=$install_dir
 install_dir=$(CDPATH= cd "$install_dir" && pwd -P)
 [ ! -d "$install_dir/readyrig" ] || fail 'Destination readyrig is a directory'
 temp=$(mktemp -d "$install_dir/.readyrig-install.XXXXXX")
@@ -83,7 +101,7 @@ fi
 mv -f "$temp/readyrig" "$install_dir/readyrig"
 printf '\nInstalled: %s/readyrig\n' "$install_dir"
 case ":${PATH:-}:" in
-  *":$install_dir:"*) ;;
+  *":$install_dir:"*|*":$requested_install_dir:"*) ;;
   *) printf 'Add this directory to PATH in your shell profile: %s\n' "$install_dir";;
 esac
 if [ "$setup" = 1 ]; then

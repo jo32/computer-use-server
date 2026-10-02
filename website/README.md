@@ -20,6 +20,10 @@ npm run build     # Sync icons, check types, and build into dist/.
 npm run preview   # Preview the production build at http://127.0.0.1:4173.
 ```
 
+## Intro film
+
+`/intro` plays a 99-second animated introduction in the style of the app icon: an ivory 1984 Macintosh with a one-bit System 1 screen. It is a sub page of the same app. `src/Intro.tsx` renders the markup in `src/intro/stage.html`, `src/intro/intro.css` holds the styles (every rule is scoped under `.intro-page`), and `src/intro/player.ts` runs the timeline and draws the pixel sprites. The page loads on demand, so the main page does not carry it. The screenshots in `public/intro/` come from the public website and from a throwaway console instance with sample data. The film and its captions are in English; only the page chrome is translated.
+
 ## Production hosting
 
 The [website](https://readyrig.getmegaportal.com/) and [device console](https://readyrig.getmegaportal.com/console) use the `readyrig-cloud` Worker. Cloudflare serves static assets, Google sign-in, device management APIs, and D1 storage.

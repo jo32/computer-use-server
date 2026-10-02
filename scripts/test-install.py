@@ -68,16 +68,84 @@ output.write_bytes(source.read_bytes())
             content = hashlib.sha256(BINARY).hexdigest() + f"  readyrig-web-{platform}-{arch}\n"
         (self.root / "checksums").write_text(content)
 
-    def install(self, *arguments, pipe=False):
-        options = ["--install-dir", str(self.destination), *arguments]
+    def install(self, *arguments, pipe=False, auto=False):
+        options = list(arguments) if auto else ["--install-dir", str(self.destination), *arguments]
+        source = SCRIPT.read_text()
+        if auto:
+            # Map the shared bin into the fixture so root/default-path tests can
+            # never modify the host's /usr/local/bin.
+            source = source.replace("/usr/local/bin", str(self.root / "local/bin"))
+            pipe = True
         if pipe:
-            result = subprocess.run(["sh", "-s", "--", *options], input=SCRIPT.read_text(), text=True,
+            result = subprocess.run(["sh", "-s", "--", *options], input=source, text=True,
                                     env=self.env, capture_output=True, timeout=15)
         else:
             result = subprocess.run(["sh", str(SCRIPT), *options], text=True, env=self.env,
                                     capture_output=True, timeout=15)
         self.assertFalse(list(self.destination.glob(".readyrig-install.*")), result.stderr)
         return result
+
+    def test_default_selects_writable_standard_path_directory(self):
+        self.checksums()
+        for directory in [self.root / ".local/bin", self.root / "bin", self.root / "local/bin"]:
+            with self.subTest(directory=directory):
+                directory.mkdir(parents=True)
+                original_path = self.env["PATH"]
+                self.env["PATH"] = str(directory) + os.pathsep + original_path
+                result = self.install("--no-setup", auto=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((directory / "readyrig").read_bytes(), BINARY)
+                self.assertNotIn("Add this directory to PATH", result.stdout)
+                self.env["PATH"] = original_path
+
+    def test_default_prefers_user_directory_over_shared_directory(self):
+        self.checksums()
+        user = self.root / ".local/bin"
+        shared = self.root / "local/bin"
+        for directory in [user, shared]:
+            directory.mkdir(parents=True)
+        self.env["PATH"] = os.pathsep.join([str(shared), str(user), self.env["PATH"]])
+        result = self.install("--no-setup", auto=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((user / "readyrig").read_bytes(), BINARY)
+        self.assertFalse((shared / "readyrig").exists())
+
+    @unittest.skipIf(os.geteuid() == 0, "root can write despite directory permission bits")
+    def test_default_skips_unwritable_directory(self):
+        self.checksums()
+        user = self.root / ".local/bin"
+        shared = self.root / "local/bin"
+        for directory in [user, shared]:
+            directory.mkdir(parents=True)
+        user.chmod(0o555)
+        self.addCleanup(user.chmod, 0o755)
+        self.env["PATH"] = os.pathsep.join([str(user), str(shared), self.env["PATH"]])
+        result = self.install("--no-setup", auto=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((shared / "readyrig").read_bytes(), BINARY)
+        self.assertFalse((user / "readyrig").exists())
+
+    def test_default_falls_back_without_modifying_arbitrary_path_directory(self):
+        self.checksums()
+        result = self.install("--no-setup", auto=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / ".local/bin/readyrig").read_bytes(), BINARY)
+        self.assertIn("Add this directory to PATH", result.stdout)
+        self.assertFalse((self.mock / "readyrig").exists())
+
+    def test_explicit_destination_overrides_default_and_environment(self):
+        self.checksums()
+        user = self.root / ".local/bin"
+        user.mkdir(parents=True)
+        self.env["PATH"] = str(user) + os.pathsep + self.env["PATH"]
+        self.env["READYRIG_INSTALL_DIR"] = str(self.root / "environment bin")
+        result = self.install("--no-setup", auto=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "environment bin/readyrig").read_bytes(), BINARY)
+        result = self.install("--no-setup")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed.read_bytes(), BINARY)
+        self.assertFalse((user / "readyrig").exists())
 
     def test_pipe_install_all_supported_platforms_and_repeat(self):
         for system, machine, platform, arch in [("Linux", "x86_64", "linux", "amd64"),
