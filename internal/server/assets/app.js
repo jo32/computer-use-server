@@ -57,13 +57,44 @@ function renderCalls(){
 async function loadDetail(){
  const id=state.selected,version=++state.detailVersion;
  if(!id){state.detail=null;renderDetail(null);return}
+ if(state.detail?.call.id===id&&state.detail.call.status!=='running'){renderDetail(state.detail.call);return}
  try {const data=await api('/api/calls/'+encodeURIComponent(id));if(version!==state.detailVersion||id!==state.selected)return;state.detail=data;renderCalls();renderDetail(data.call)}
  catch(e){if(version===state.detailVersion){state.detail=null;renderDetail(null);toast(e.message)}}
 }
-const pretty=v=>esc(JSON.stringify(v,null,2)??'null');
+// Bound previews before serialization: screenshot payloads can be many megabytes.
+// The stored result remains intact for Copy; it must never become a wrapped text node.
+function previewValue(value){
+ let remaining=32768,nodes=1000;
+ const omitted=()=>t("[预览已省略，复制可获取完整结果]");
+ function visit(v,depth){
+  if(--nodes<0||remaining<=0||depth>12)return omitted();
+  if(typeof v==='string'){const limit=Math.min(4096,remaining);remaining-=Math.min(v.length,limit);return v.length>limit?v.slice(0,limit)+omitted():v}
+  if(!v||typeof v!=='object')return v;
+  const out=Array.isArray(v)?[]:Object.create(null);
+  for(const key of Object.keys(v)){
+   if(nodes<=0||remaining<=0){out[Array.isArray(v)?out.length:'…']=omitted();break}
+   const name=key.slice(0,256);remaining-=name.length;
+   out[name]=key==='data'&&(v.type==='image'||v.type==='audio')?t("[图像或音频数据已省略]"):visit(v[key],depth+1);
+  }
+  return out;
+ }
+ return visit(value,0);
+}
+const pretty=v=>esc(JSON.stringify(previewValue(v),null,2)??'null');
+const detailImageURLs=new Set();
+function clearDetailImages(){for(const url of detailImageURLs)URL.revokeObjectURL(url);detailImageURLs.clear()}
+function showBrowserImage(button){
+ const part=state.detail?.call.result?.content?.[Number(button.dataset.browserImage)];
+ if(part?.type!=='image'||!/^image\/(png|jpeg|webp)$/.test(part.mimeType)||typeof part.data!=='string')return;
+ const bytes=Uint8Array.from(atob(part.data),c=>c.charCodeAt(0));
+ const url=URL.createObjectURL(new Blob([bytes],{type:part.mimeType}));
+ detailImageURLs.add(url);
+ const img=document.createElement('img');img.decoding='async';img.src=url;img.alt=t("Chrome 返回的页面截图");
+ button.replaceWith(img);
+}
 function outputView(c){
  const r=c.result||{};
- if(c.category==='browser'&&Array.isArray(r.content))return `<div class="browser-output">${r.content.map((part,i)=>part.type==='text'?`<pre data-scroll="browser-${i}">${esc(part.text)}</pre>`:part.type==='image'&&/^image\/(png|jpeg|webp)$/.test(part.mimeType)&&/^[A-Za-z0-9+/=\r\n]+$/.test(part.data)?`<img src="data:${esc(part.mimeType)};base64,${esc(part.data)}" alt="${t("Chrome 返回的页面截图")}">`:'').join('')}</div>`;
+ if(c.category==='browser'&&Array.isArray(r.content))return `<div class="browser-output">${r.content.slice(0,100).map((part,i)=>part.type==='text'?`<pre data-scroll="browser-${i}">${esc(previewValue(part.text))}</pre>`:part.type==='image'&&/^image\/(png|jpeg|webp)$/.test(part.mimeType)&&typeof part.data==='string'?`<button class="button" data-browser-image="${i}">${t("加载截图")}</button>`:'').join('')}</div>`;
 
  if(c.category==='terminal')return `<div class="terminal-output"><div class="terminal-heading"><span>›_ ${r.running||c.status==='running'?t("正在执行"):t("执行输出")}</span><span>${r.exit_code!=null?'exit '+esc(r.exit_code):t("实时")}</span></div>${c.arguments?.command?`<pre class="terminal-command">$ ${esc(c.arguments.command)}</pre>`:''}<pre data-scroll="stdout" class="stdout">${esc(r.stdout|| (c.status==='running'?t("等待输出…"):t("（无标准输出）")))}</pre>${r.stderr?`<div class="stream-label">${t("标准错误")}</div><pre data-scroll="stderr" class="stderr">${esc(r.stderr)}</pre>`:''}</div>${r.truncated?`<p class="result-note">${t("输出已达到 1 MiB 上限，后续内容未保存。")}</p>`:''}`;
  if(c.tool==='read_file'&&typeof r.content==='string')return `<div class="detail-section"><h3>${esc(c.arguments?.path)} <span>${esc(r.encoding||'utf-8')} · ${esc(r.size)} B</span></h3><pre class="file-content" data-scroll="file">${esc(r.content)}</pre>${r.truncated?`<p class="result-note">${t("文件内容已截断。")}</p>`:''}</div>`;
@@ -80,6 +111,7 @@ function renderDetail(c){
   const same=target.dataset.call===c?.id;
   const opened=same?[...target.querySelectorAll('details[open]')].map(d=>d.dataset.preserve):[];
   const scrolls=same?[...target.querySelectorAll('[data-scroll]')].map(e=>({key:e.dataset.scroll,top:e.scrollTop,bottom:e.scrollHeight-e.scrollTop-e.clientHeight<20})):[];
+  clearDetailImages();
   target.innerHTML=html;target.dataset.call=c?.id||'';target._html=html;
   target.querySelectorAll('details').forEach(d=>d.open=opened.includes(d.dataset.preserve));
   target.querySelectorAll('[data-scroll]').forEach(e=>{const old=scrolls.find(s=>s.key===e.dataset.scroll);e.scrollTop=old?(old.bottom?e.scrollHeight:old.top):0});
@@ -229,7 +261,7 @@ function openTool(name){
 async function copy(text){try{await navigator.clipboard.writeText(text);toast(t("已复制"));return true}catch{const el=document.createElement('textarea');el.value=text;document.body.appendChild(el);el.select();let ok=false;try{ok=document.execCommand('copy')}catch{}finally{el.remove()}toast(ok?t("已复制"):t("无法访问剪贴板，请手动复制"));return ok}}
 function theme(){const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';localStorage.setItem('readyrig-theme',dark?'dark':'light')}
 document.documentElement.dataset.theme=localStorage.getItem('readyrig-theme')||localStorage.getItem('relay-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
-document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.dataset.page)showPage(b.dataset.page);if('chromeAuthorize'in b.dataset){b.disabled=true;try{const result=await api('/api/chrome/authorize',{});if(result.ok){await api('/api/chrome/refresh',{});toast(t("已选择调试入口，正在重新检测"));await refresh()}}finally{b.disabled=false}}if('chromeRefresh'in b.dataset){await api('/api/chrome/refresh',{});toast(t("正在重新检测 Chrome"));await refresh()}if('category'in b.dataset){state.category=b.dataset.category;state.offset=0;state.selected=null;document.querySelectorAll('[data-category]').forEach(t=>{t.classList.toggle('active',t===b);t.setAttribute('aria-pressed',String(t===b))});await refresh()}if(b.dataset.call){state.selected=state.selected===b.dataset.call?null:b.dataset.call;renderCalls();await loadDetail()}if(b.dataset.session){state.session=b.dataset.session;state.offset=0;state.selected=null;showPage('activity');await refresh()}if(b.dataset.tool)openTool(b.dataset.tool);if('testFiles'in b.dataset)openTool('list_directory');if('viewReplay'in b.dataset){state.replayTarget=b.dataset.viewReplay;state.frameSignature='';showPage('replay')}if(b.dataset.replaySide){state.replaySide=b.dataset.replaySide;paintReplay()}if(b.dataset.openCall){state.selected=b.dataset.openCall;showPage('activity');await loadDetail()}if(b.dataset.cancel){b.disabled=true;await api('/api/calls/'+encodeURIComponent(b.dataset.cancel)+'/cancel',{});toast(t("已请求停止，等待进程退出"));await refresh()}if('copyResult'in b.dataset&&state.detail)await copy(JSON.stringify(state.detail.call.result,null,2));if(b.dataset.capability)await toggleCapability(b.dataset.capability);if('frame'in b.dataset){stopReplay();state.frame=Number(b.dataset.frame);await renderFrame()}}catch(e){toast(e.message)}});
+document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{if('browserImage'in b.dataset)showBrowserImage(b);if(b.dataset.page)showPage(b.dataset.page);if('chromeAuthorize'in b.dataset){b.disabled=true;try{const result=await api('/api/chrome/authorize',{});if(result.ok){await api('/api/chrome/refresh',{});toast(t("已选择调试入口，正在重新检测"));await refresh()}}finally{b.disabled=false}}if('chromeRefresh'in b.dataset){await api('/api/chrome/refresh',{});toast(t("正在重新检测 Chrome"));await refresh()}if('category'in b.dataset){state.category=b.dataset.category;state.offset=0;state.selected=null;document.querySelectorAll('[data-category]').forEach(t=>{t.classList.toggle('active',t===b);t.setAttribute('aria-pressed',String(t===b))});await refresh()}if(b.dataset.call){state.selected=state.selected===b.dataset.call?null:b.dataset.call;renderCalls();await loadDetail()}if(b.dataset.session){state.session=b.dataset.session;state.offset=0;state.selected=null;showPage('activity');await refresh()}if(b.dataset.tool)openTool(b.dataset.tool);if('testFiles'in b.dataset)openTool('list_directory');if('viewReplay'in b.dataset){state.replayTarget=b.dataset.viewReplay;state.frameSignature='';showPage('replay')}if(b.dataset.replaySide){state.replaySide=b.dataset.replaySide;paintReplay()}if(b.dataset.openCall){state.selected=b.dataset.openCall;showPage('activity');await loadDetail()}if(b.dataset.cancel){b.disabled=true;await api('/api/calls/'+encodeURIComponent(b.dataset.cancel)+'/cancel',{});toast(t("已请求停止，等待进程退出"));await refresh()}if('copyResult'in b.dataset&&state.detail)await copy(JSON.stringify(state.detail.call.result,null,2));if(b.dataset.capability)await toggleCapability(b.dataset.capability);if('frame'in b.dataset){stopReplay();state.frame=Number(b.dataset.frame);await renderFrame()}}catch(e){toast(e.message)}});
 $('refresh').onclick=()=>refresh();$('session-filter').onchange=()=>{state.session=$('session-filter').value;state.offset=0;state.selected=null;state.frameSignature='';refresh()};
 $('connect').onclick=()=>showPage('settings');$('theme').onclick=theme;$('pause').onclick=async()=>{try{await api('/api/pause',{paused:!state.data.paused});await refresh()}catch(e){error(e.message)}};$('resume').onclick=()=>{$('pause').click()};$('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{state.query=$('search').value;state.offset=0;state.selected=null;refresh()},250)};$('status-filter').onchange=()=>{state.status=$('status-filter').value;state.offset=0;state.selected=null;refresh()};$('previous').onclick=()=>{state.offset=Math.max(0,state.offset-40);state.selected=null;refresh()};$('next').onclick=()=>{state.offset+=40;state.selected=null;refresh()};$('close-tool').onclick=()=>$('tool-dialog').close();$('tool-dialog').addEventListener('click',e=>{if(e.target===$('tool-dialog')){const rect=e.target.getBoundingClientRect();if(e.clientX<rect.left||e.clientX>rect.right||e.clientY<rect.top||e.clientY>rect.bottom)e.target.close()}});
 $('run-tool').onclick=async()=>{const b=$('run-tool');state.toolRunning=true;b.disabled=true;b.textContent=t("执行中…");try{const args=JSON.parse($('tool-arguments').value);const result=await api('/api/tools/'+state.tool.name,args);if(result.result?.screenshot)result.result.screenshot=t("[快照已保存，可在桌面回放中查看]");$('tool-result').textContent=JSON.stringify(result,null,2);$('tool-result').classList.remove('hidden');state.selected=result.call_id;await refresh()}catch(e){$('tool-result').textContent=JSON.stringify(e.data||{error:e.message},null,2);$('tool-result').classList.remove('hidden');await refresh()}finally{state.toolRunning=false;b.disabled=PUBLIC_VIEW||(state.data.paused&&!['help','list_projects'].includes(state.tool.name))||!state.data.enabled[state.tool.category];b.textContent=t("运行工具 →")}};

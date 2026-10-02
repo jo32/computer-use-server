@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"computer-use-server/internal/buildinfo"
+	"computer-use-server/internal/cloud"
 	"computer-use-server/internal/harness"
 	"computer-use-server/internal/store"
 	"encoding/json"
@@ -45,6 +46,9 @@ type terminalUI struct {
 	opts                   *startupOptions
 	client                 *controlClient
 	state                  tuiState
+	cloud                  cloud.Status
+	cloudError             string
+	accountLines           int
 	info                   runtimeInfo
 	calls                  []store.Call
 	tab, selected          int
@@ -161,11 +165,11 @@ func runTUI(f *flag.FlagSet, o *startupOptions) error {
 				continue
 			}
 			switch key {
-			case "1", "2", "3", "4":
+			case "1", "2", "3", "4", "5":
 				u.tab, u.selected = int(key[0]-'1'), 0
 				u.refresh()
 			case "\t":
-				u.tab, u.selected = (u.tab+1)%4, 0
+				u.tab, u.selected = (u.tab+1)%5, 0
 				u.refresh()
 			case "up", "k":
 				if u.selected > 0 {
@@ -198,17 +202,41 @@ func runTUI(f *flag.FlagSet, o *startupOptions) error {
 				if u.tab == 1 && u.client != nil {
 					u.prompt, u.input = "Project folder", ""
 				}
+			case "l":
+				if u.tab == 4 {
+					u.login(results)
+				}
 			case "\r", "\n":
 				if u.tab == 1 && u.selected < len(u.state.Projects.Projects) {
 					u.request("/api/projects", map[string]string{"action": "activate", "id": u.state.Projects.Projects[u.selected].ID}, results)
 				}
 			case "d":
+				if u.tab == 4 && (u.cloud.DeviceID != "" || u.cloud.LoginURL != "") {
+					u.prompt, u.input = "Disconnect cloud account or cancel login? Type yes", ""
+				}
 				if u.tab == 1 && u.selected < len(u.state.Projects.Projects) {
 					u.prompt, u.input = "Remove access to selected project? Type yes", ""
 				}
 			}
 		}
 	}
+}
+
+func (u *terminalUI) login(results chan<- error) {
+	if u.cloud.DeviceID != "" || u.cloud.LoginURL != "" {
+		u.message = "Disconnect the account or cancel the pending login with d first."
+		return
+	}
+	name := u.cloud.Name
+	if name == "" {
+		name, _ = os.Hostname()
+	}
+	url := u.cloud.URL
+	if url == "" {
+		url = u.opts.CloudURL
+	}
+	u.selected = 0
+	u.request("/api/cloud/login", map[string]string{"name": name, "url": url}, results)
 }
 
 func (u *terminalUI) perform(message string, results chan<- error, action func() error) {
@@ -222,6 +250,13 @@ func (u *terminalUI) request(path string, input any, results chan<- error) {
 		return
 	}
 	client := u.client
+	if strings.HasPrefix(path, "/api/cloud/") {
+		// Cloud login/disconnect may wait for a remote response. Keep the short
+		// timeout for refreshes, but allow these asynchronous actions to finish.
+		httpClient := *client.client
+		httpClient.Timeout = 30 * time.Second
+		client = &controlClient{client: &httpClient, session: client.session}
+	}
 	u.perform("Applying change...", results, func() error {
 		_, err := client.request(http.MethodPost, path, input)
 		return err
@@ -252,7 +287,9 @@ func (u *terminalUI) editPrompt(key string, results chan<- error) {
 				return
 			}
 			u.request("/api/projects", map[string]string{"action": "add", "path": path}, results)
-		} else if input == "yes" && u.selected < len(u.state.Projects.Projects) {
+		} else if prompt == "Disconnect cloud account or cancel login? Type yes" && input == "yes" {
+			u.request("/api/cloud/disconnect", map[string]any{}, results)
+		} else if prompt == "Remove access to selected project? Type yes" && input == "yes" && u.selected < len(u.state.Projects.Projects) {
 			u.request("/api/projects", map[string]string{"action": "remove", "id": u.state.Projects.Projects[u.selected].ID}, results)
 		}
 	default:
@@ -267,6 +304,7 @@ func (u *terminalUI) refresh() {
 	client, err := controlClientWithTimeout(u.opts.DataDir, time.Second)
 	if err != nil {
 		u.client, u.state, u.info, u.calls = nil, tuiState{}, runtimeInfo{}, nil
+		u.cloud, u.cloudError = cloud.Status{}, ""
 		return
 	}
 	raw, err := client.request(http.MethodGet, "/api/state", nil)
@@ -279,6 +317,17 @@ func (u *terminalUI) refresh() {
 		return
 	}
 	u.client = client
+	if u.tab == 4 {
+		u.cloud = cloud.Status{}
+		raw, err := client.request(http.MethodGet, "/api/cloud", nil)
+		if err == nil {
+			err = json.Unmarshal(raw, &u.cloud)
+		}
+		u.cloudError = ""
+		if err != nil {
+			u.cloudError = err.Error()
+		}
+	}
 	if raw, err := client.request(http.MethodGet, "/api/runtime", nil); err == nil {
 		_ = json.Unmarshal(raw, &u.info)
 	}
@@ -305,6 +354,8 @@ func (u *terminalUI) itemCount() int {
 		return len(u.state.Tools)
 	case 3:
 		return len(u.calls)
+	case 4:
+		return u.accountLines
 	}
 	return 0
 }
@@ -327,7 +378,7 @@ func (u *terminalUI) render(width, height int) string {
 	}
 	lines := []string{tuiAccent + "  ReadyRig" + tuiReset + "  " + terminalText(buildinfo.Version) + "  |  " + status, ""}
 	nav := "  "
-	for i, name := range []string{"Overview", "Projects", "Tools", "Activity"} {
+	for i, name := range []string{"Overview", "Projects", "Tools", "Activity", "Account"} {
 		label := fmt.Sprintf(" %d %s ", i+1, name)
 		if i == u.tab {
 			nav += tuiAccent + "\x1b[7m" + label + tuiReset
@@ -370,6 +421,11 @@ func (u *terminalUI) render(width, height int) string {
 				call := u.calls[i]
 				lines = append(lines, u.row(i, terminalText(call.Tool+"  "+call.Status+"  "+call.Session)))
 			}
+		case 4:
+			account := u.renderAccount(width)
+			u.accountLines = len(account)
+			start := min(u.selected, max(0, len(account)-available))
+			lines = append(lines, account[start:min(len(account), start+available)]...)
 		}
 	}
 	if len(lines) > height-4 {
@@ -378,7 +434,7 @@ func (u *terminalUI) render(width, height int) string {
 	for len(lines) < height-4 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, tuiDim+"  Tab / 1-4 views   arrows / j k select   r refresh   q quit"+tuiReset,
+	lines = append(lines, tuiDim+"  Tab / 1-5 views   arrows / j k select/scroll   r refresh   q quit"+tuiReset,
 		"  "+terminalText(u.message), "  "+terminalText(u.prompt+" "+u.input))
 	var b strings.Builder
 	b.WriteString("\x1b[H")
@@ -394,6 +450,41 @@ func (u *terminalUI) render(width, height int) string {
 	}
 	b.WriteString("\x1b[J")
 	return b.String()
+}
+
+func (u *terminalUI) renderAccount(width int) []string {
+	state := u.cloud.State
+	if state == "" {
+		state = "not connected"
+	}
+	items := []string{"l sign in with Google   d disconnect / cancel login", "",
+		"Status    " + state, "Computer  " + u.cloud.Name, "Account   " + u.cloud.Email}
+	if u.cloudError != "" {
+		items = append(items, "Unable to read account status: "+u.cloudError)
+	}
+	if u.cloud.State == "error" && u.cloud.Message != "" {
+		items = append(items, u.cloud.Message, "Press d to disconnect, then l to try again.")
+	}
+	if u.cloud.LoginURL != "" {
+		items = append(items, "", "Open this link in your own computer's browser:", u.cloud.LoginURL,
+			"Verification code: "+u.cloud.Code, "Sign in with Google, compare the code, and confirm.", "Waiting for confirmation; status refreshes automatically.")
+	} else if u.cloud.Message != "" {
+		items = append(items, "", u.cloud.Message)
+	}
+	var lines []string
+	for _, item := range items {
+		// Wrap links instead of clipping them, including in narrow SSH terminals.
+		item = terminalText(item)
+		if item == "" {
+			lines = append(lines, "")
+		}
+		for len(item) > 0 {
+			part := clipTerminalLine(item, max(2, width-3))
+			lines = append(lines, "  "+part)
+			item = strings.TrimPrefix(item, part)
+		}
+	}
+	return lines
 }
 
 func (u *terminalUI) row(i int, value string) string {

@@ -53,7 +53,7 @@ Install without Go, Node.js, or administrator access:
 curl -fsSL https://readyrig.getmegaportal.com/install.sh | sh
 ```
 
-The installer places the CLI at `~/.local/bin/readyrig`, then automatically opens a configuration guide in your terminal. Choose a workspace, terminal access, and Chrome tools; the guide can start ReadyRig in the background when finished. Existing configurations are kept on reinstall. Add `~/.local/bin` to your shell's PATH if prompted. Downloads pin one stable release, verify its `SHA256SUMS`, and replace the binary atomically. Failed downloads, checksum mismatches, or releases without CLI commands leave an existing binary intact. Use `--no-setup` (or `READYRIG_NO_SETUP=1`) for unattended installation. Without an interactive terminal, the installer prints the command to open the guide later.
+The installer chooses an existing, writable directory already in PATH, checking `~/.local/bin`, `~/bin`, then `/usr/local/bin`. If none qualifies, it installs into `~/.local/bin` and prompts you to add it to PATH. Override the destination with `--install-dir` or `READYRIG_INSTALL_DIR`. After installation, it automatically opens a configuration guide in your terminal. Choose a workspace, terminal access, and Chrome tools; the guide can start ReadyRig in the background when finished. Existing configurations are kept on reinstall. Downloads pin one stable release, verify its `SHA256SUMS`, and replace the binary atomically. Failed downloads, checksum mismatches, or releases without CLI commands leave an existing binary intact. Use `--no-setup` (or `READYRIG_NO_SETUP=1`) for unattended installation. Without an interactive terminal, the installer prints the command to open the guide later.
 
 To inspect the installer first or select a version and destination:
 
@@ -71,7 +71,7 @@ Open the terminal dashboard:
 readyrig
 ```
 
-On first launch it opens the setup guide; on later launches it starts or attaches to the service. The TUI shows live connection and capability status, approved projects, tools, and recent activity. Use Tab or 1–4 to change views, arrows or j/k to select items, `s` to start/stop, `p` to pause/resume, and `f`/`t`/`b`/`c` to toggle and save files/terminal/browser/computer. In Projects, `a` adds a folder, Enter selects it, and `d` removes access after confirmation. `h` toggles temporary public sharing. `q` or Ctrl-C closes the TUI and keeps the service running. Noninteractive invocation prints command help and returns.
+On first launch it opens the setup guide; on later launches it starts or attaches to the service. The TUI shows live connection and capability status, approved projects, tools, and recent activity. Use Tab or 1–5 to change views, arrows or j/k to select items, `s` to start/stop, `p` to pause/resume, and `f`/`t`/`b`/`c` to toggle and save files/terminal/browser/computer. In Projects, `a` adds a folder, Enter selects it, and `d` removes access after confirmation. `h` toggles temporary public sharing. In Account (5), `l` starts Google sign-in and shows a link and verification code to use in your own computer’s browser, including when connected over SSH. Binding status refreshes automatically; `d` disconnects the account or cancels a pending login after confirmation. Arrow keys scroll long account details on small terminals. `q` or Ctrl-C closes the TUI and keeps the service running. Noninteractive invocation prints command help and returns.
 
 Run `readyrig setup` to change saved startup settings while the service is stopped. For scripted configuration and lifecycle control:
 

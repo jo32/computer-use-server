@@ -30,7 +30,7 @@ jobs:
           printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
           make test
           node --check internal/server/assets/app.js
-          node --test scripts/test-i18n.cjs
+          node --test scripts/test-i18n.cjs scripts/test-activity.cjs
           bash -n scripts/sign-macos.sh scripts/notarize-macos.sh
           sh -n scripts/package-macos.sh scripts/release.sh website/public/install.sh
       - name: Check for an existing release

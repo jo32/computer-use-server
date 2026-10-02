@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify the CLI in a real terminal, with isolated settings and no cloud access."""
 import fcntl
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import subprocess
 import tempfile
 import termios
 import time
+import threading
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -201,6 +203,71 @@ class TUITests(unittest.TestCase):
         self.read_until('running  PID')
         self.quit('\x03')
         self.assertEqual(self.cli('status').returncode, 0)
+
+    def test_account_login_cancel_bind_and_disconnect(self):
+        approved = threading.Event()
+        requests = []
+        pair_id = 'fixture-pair-' + 'x' * 80
+
+        class CloudHandler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length', 0)))
+                requests.append(self.path)
+                if self.path == '/api/agent/pair':
+                    # Longer than the TUI's refresh timeout: login must still succeed.
+                    time.sleep(1.2)
+                    reply = {'id': pair_id, 'code': '123456'}
+                elif self.path == '/api/agent/pair/' + pair_id and approved.is_set():
+                    reply = {'device_id': 'fixture-device', 'email': 'tui@example.test'}
+                else:
+                    reply = {}
+                body = json.dumps(reply).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), CloudHandler)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.cli('init', '--workspace', str(self.home / 'workspace'), '--no-chrome',
+                 '--gateway', '127.0.0.1:0', '--ui', '127.0.0.1:0',
+                 '--cloud-url', f'http://127.0.0.1:{server.server_port}')
+        self.open_terminal()
+        self.read_until('Quitting this dashboard keeps the service running.')
+        self.send('5')
+        self.read_until('l sign in with Google')
+        self.send('l')
+        screen = self.read_until('Verification code: 123456')
+        self.assertIn('Open this link', screen)
+        # The long link must wrap without dropping any URL characters.
+        plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', screen)
+        self.assertIn(pair_id, re.sub(r'\s+', '', plain))
+        self.send('l')
+        self.read_until('cancel the pending login with d first')
+        self.assertEqual(requests.count('/api/agent/pair'), 1)
+        self.send('d')
+        self.read_until('Disconnect cloud account or cancel login? Type yes')
+        self.send('no\r')
+        self.read_until('Verification code: 123456')
+        self.assertEqual(json.loads(self.cli('cloud', 'status').stdout)['state'], 'signing_in')
+        self.send('dyes\r')
+        self.read_until('Status    signed_out')
+        self.send('l')
+        self.read_until('Verification code: 123456')
+        approved.set()
+        self.read_until('tui@example.test')
+        self.assertEqual(json.loads(self.cli('cloud', 'status').stdout)['device_id'], 'fixture-device')
+        self.send('dyes\r')
+        self.read_until('Status    signed_out')
+        self.assertIn('/api/agent/disconnect', requests)
+        self.assertNotIn('device_id', json.loads(self.cli('cloud', 'status').stdout))
+        self.quit()
 
 
 if __name__ == '__main__':

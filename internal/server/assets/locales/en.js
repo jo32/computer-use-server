@@ -1,5 +1,8 @@
 'use strict';
 const readyRigEnglish = {
+  "[预览已省略，复制可获取完整结果]": "[Preview omitted; copy for the full result]",
+  "[图像或音频数据已省略]": "[Image or audio data omitted]",
+  "加载截图": "Load screenshot",
   "打开文件夹": "Open folder",
   "打开方式": "Open with",
   "正在读取打开方式…": "Loading applications…",
