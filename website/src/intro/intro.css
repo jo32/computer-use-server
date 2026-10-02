@@ -12,8 +12,8 @@
   --dither:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'><rect width='2' height='2' fill='white'/><rect width='1' height='1' fill='black'/><rect x='1' y='1' width='1' height='1' fill='black'/></svg>");
   color-scheme:light;
 }
-.intro-page{margin:0;background:#cbc4b1;color:var(--ink);font-family:var(--pix);padding-inline:16px;padding-block:20px;min-height:100vh;box-sizing:border-box}
-.intro-page .wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.intro-page{margin:0;background:#cbc4b1;color:var(--ink);font-family:var(--pix);padding-inline:16px;padding-block:20px;min-height:100vh;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}
+.intro-page .wrap{width:100%;max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .intro-page .case{background:linear-gradient(var(--ivory),var(--ivory-2));border:1px solid var(--ivory-edge);border-radius:28px;padding:26px 26px 0;box-shadow:inset 0 2px 0 #fffa,0 14px 34px #0003}
 .intro-page .glass{background:var(--ink);border-radius:20px;padding:12px;box-shadow:inset 0 0 0 3px #2c2c2c,inset 0 8px 18px #000a}
 .intro-page .chin{display:flex;align-items:center;justify-content:space-between;padding:20px 28px 22px}
@@ -125,7 +125,7 @@
 }
 
 /* Page chrome around the film */
-.intro-page .intro-bar{max-width:1180px;margin:0 auto 12px;font-size:15px;font-weight:600}
+.intro-page .intro-bar{width:100%;max-width:1180px;margin:0 auto 12px;font-size:15px;font-weight:600}
 .intro-page .intro-bar a{color:var(--ink);text-decoration:none;border-bottom:2px solid var(--ink)}
 .intro-page .intro-bar a:focus-visible{outline:3px solid var(--led);outline-offset:3px}
-.intro-page .intro-note{max-width:1180px;margin:14px auto 0;font-size:13px;color:#5d5748}
+.intro-page .intro-note{width:100%;max-width:1180px;margin:14px auto 0;font-size:13px;color:#5d5748}
