@@ -1,14 +1,25 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { languagePreference, resolveLocale, translate, translateData } from '../src/locale.ts'
+import { languagePreference, localeNames, locales, openGraphLocales, resolveLocale, translate, translateData } from '../src/locale.ts'
 
 test('automatic selection uses supported browser languages in order', () => {
-  assert.equal(resolveLocale('auto', ['de-DE', 'zh-TW', 'en-US']), 'zh-CN')
+  assert.equal(resolveLocale('auto', ['pt-BR', 'zh-TW', 'en-US']), 'zh-TW')
   assert.equal(resolveLocale('auto', ['en-GB', 'zh-CN']), 'en')
-  assert.equal(resolveLocale('auto', ['fr-FR']), 'en')
+  assert.equal(resolveLocale('auto', ['fr-CA']), 'fr')
+  assert.equal(resolveLocale('auto', ['pt-BR', 'ru']), 'en')
   assert.equal(resolveLocale('zh-CN', ['en-US']), 'zh-CN')
   assert.equal(languagePreference('zh-CN'), 'zh-CN')
   assert.equal(languagePreference('unsupported'), null)
+  assert.equal(languagePreference(null), null)
+})
+
+test('Chinese variants map to the matching script and every locale is selectable', () => {
+  for (const tag of ['zh-TW', 'zh-HK', 'zh-MO', 'zh-Hant', 'zh-Hant-TW']) assert.equal(resolveLocale('auto', [tag]), 'zh-TW')
+  for (const tag of ['zh', 'zh-CN', 'zh-SG', 'zh-Hans']) assert.equal(resolveLocale('auto', [tag]), 'zh-CN')
+  for (const [tag, locale] of [['ja-JP', 'ja'], ['ko-KR', 'ko'], ['es-MX', 'es'], ['de-AT', 'de']]) assert.equal(resolveLocale('auto', [tag]), locale)
+  for (const locale of locales) assert.equal(languagePreference(locale), locale)
+  assert.equal(Object.keys(localeNames).length, locales.length)
+  assert.equal(Object.keys(openGraphLocales).length, locales.length)
 })
 
 test('interpolation allows parameter reordering without changing JSON or inserted text', () => {

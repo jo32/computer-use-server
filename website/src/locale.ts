@@ -1,16 +1,52 @@
-export type Locale = 'zh-CN' | 'en'
+export const locales = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'es', 'fr', 'de'] as const
+export type Locale = (typeof locales)[number]
 export type LanguagePreference = Locale | 'auto'
 export type Translate = (message: string, values?: Record<string, string | number>) => string
 
+// Each name is written in its own language so visitors can always find theirs.
+export const localeNames: Record<Locale, string> = {
+  'zh-CN': '简体中文',
+  'zh-TW': '繁體中文',
+  en: 'English',
+  ja: '日本語',
+  ko: '한국어',
+  es: 'Español',
+  fr: 'Français',
+  de: 'Deutsch',
+}
+
+export const openGraphLocales: Record<Locale, string> = {
+  'zh-CN': 'zh_CN',
+  'zh-TW': 'zh_TW',
+  en: 'en_US',
+  ja: 'ja_JP',
+  ko: 'ko_KR',
+  es: 'es_ES',
+  fr: 'fr_FR',
+  de: 'de_DE',
+}
+
+function isLocale(value: string): value is Locale {
+  return (locales as readonly string[]).includes(value)
+}
+
 export function languagePreference(value: string | null): LanguagePreference | null {
-  return value === 'auto' || value === 'zh-CN' || value === 'en' ? value : null
+  if (value === 'auto') return value
+  return value !== null && isLocale(value) ? value : null
+}
+
+function matchLocale(language: string): Locale | null {
+  if (/^zh-(?:tw|hk|mo|hant)(?:-|$)/i.test(language)) return 'zh-TW'
+  if (/^zh(?:-|$)/i.test(language)) return 'zh-CN'
+  const base = language.split('-')[0].toLowerCase()
+  return isLocale(base) ? base : null
 }
 
 export function resolveLocale(preference: LanguagePreference, languages: readonly string[]): Locale {
   if (preference !== 'auto') return preference
   for (const language of languages) {
-    if (/^zh(?:-|$)/i.test(language)) return 'zh-CN'
-    if (/^en(?:-|$)/i.test(language)) return 'en'
+    const match = matchLocale(language)
+    if (match) return match
   }
   return 'en'
 }

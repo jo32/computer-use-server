@@ -110,13 +110,15 @@ h1 > span { color: var(--fg-2); }
 .hero-meta { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 12px; color: var(--muted); margin-top: 15px; }
 .hero-description { max-width: 730px; }
 .cloud-connection { margin-top: 48px; }
-.connection-map { display: grid; grid-template-columns: 1fr 70px 1fr 70px 1.15fr; align-items: center; padding: 23px 28px; background: var(--card); border: 1px solid var(--line); border-radius: 13px; }
-.map-node { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.connection-map { display: grid; grid-template-columns: minmax(0, 1fr) 76px minmax(0, 1.1fr) 76px minmax(0, 1.1fr); align-items: center; column-gap: 6px; padding: 23px 28px; background: var(--card); border: 1px solid var(--line); border-radius: 13px; }
+.map-node { display: flex; align-items: center; justify-content: center; gap: 12px; min-width: 0; }
+.map-node > div { min-width: 0; }
+.map-node > svg { flex-shrink: 0; }
 .map-node > svg { color: var(--muted); }
 .map-node strong { display: block; font-size: 16px; font-weight: 550; }
 .map-node span { display: block; font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.7; }
 .map-route { padding-inline: 8px; text-align: center; }
-.map-route > span { color: var(--faint); font-size: 9px; white-space: nowrap; }
+.map-route > span { color: var(--faint); font-size: 10px; white-space: nowrap; }
 .map-route i { display: block; position: relative; height: 1px; background: var(--line); margin-top: 9px; }
 .map-route i::after { content: ''; position: absolute; width: 5px; height: 5px; right: 0; top: -2px; border-top: 1px solid var(--faint); border-right: 1px solid var(--faint); transform: rotate(45deg); }
 .map-computers { display: grid; gap: 9px; }
@@ -136,7 +138,7 @@ h1 > span { color: var(--fg-2); }
 .platform-intro { text-align: center; margin-top: 34px; }
 .platform-intro > p { font-size: 13px; color: var(--muted); line-height: 1.8; margin-top: 8px; }
 .use-cases { margin-top: 95px; }
-.use-case-tabs > .segmented { margin: 30px auto 21px; }
+.use-case-tabs > .segmented { margin: 30px auto 21px; max-width: 100%; flex-wrap: wrap; justify-content: center; }
 .use-case-tabs > .segmented > button { font-size: 13px; padding: 9px 18px; }
 .use-case-panel { display: grid; grid-template-columns: 1.05fr 1fr; column-gap: 40px; padding: 32px; border: 1px solid var(--line); border-radius: 13px; background: var(--card); }
 .use-case-copy { min-height: 265px; }
@@ -362,7 +364,7 @@ h2 { font-size: clamp(29px, 3.5vw, 38px); line-height: 1.5; font-weight: 580; le
   .download-intro { gap: 14px; }
   .download-intro .app-icon { width: 72px; height: 72px; }
   .footer-tagline { display: none; }
-  .connection-map { padding-inline: 19px; grid-template-columns: 1fr 42px 1fr 42px 1.1fr; }
+  .connection-map { padding-inline: 19px; grid-template-columns: minmax(0, 1fr) 58px minmax(0, 1.1fr) 58px minmax(0, 1.1fr); column-gap: 4px; }
   .map-route { padding-inline: 3px; }
   .map-route > span { white-space: normal; line-height: 1.4; }
   .map-node { gap: 9px; }

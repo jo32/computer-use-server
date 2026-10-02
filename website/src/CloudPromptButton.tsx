@@ -23,7 +23,7 @@ export function CloudPromptButton({ disabled }: { disabled: boolean }) {
     if (!credential.current || credential.current.expires_at * 1000 <= Date.now()) {
       credential.current = await api<Credential>('/api/discovery-token', 'POST', {})
     }
-    return agentPrompt(location.origin, credential.current.token, locale)
+    return agentPrompt(location.origin, credential.current.token, locale.startsWith('zh') ? 'zh-CN' : 'en')
   }
 
   async function copy() {

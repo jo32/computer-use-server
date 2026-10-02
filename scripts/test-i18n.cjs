@@ -66,7 +66,9 @@ test('known diagnostic prefixes retain their technical cause',()=>{
 });
 
 test('every interface string has English copy, with matching numbered parameters',()=>{
-  const siteCatalog=JSON.parse(fs.readFileSync(path.join(root,'website/src/locales/en.json'),'utf8'));
+  const siteLocales=['en','zh-TW','ja','ko','es','fr','de'];
+  const siteCatalogs=Object.fromEntries(siteLocales.map(name=>[name,JSON.parse(fs.readFileSync(path.join(root,'website/src/locales',name+'.json'),'utf8'))]));
+  const siteCatalog=siteCatalogs.en;
   const files=['app.js','window.js','cloud.js'].map(name=>[path.join(assets,name),catalog]);
   for(const name of ['App.tsx','i18n.tsx','CloudConsole.tsx','CloudPromptButton.tsx','CloudMCP.tsx','cloud-api.ts',...fs.readdirSync(path.join(root,'website/src/components')).filter(name=>name.endsWith('.tsx')).map(name=>'components/'+name)]) files.push([path.join(root,'website/src',name),siteCatalog]);
   const chinese=/[\u3400-\u9fff]/;
@@ -80,7 +82,8 @@ test('every interface string has English copy, with matching numbered parameters
   }
   const html=fs.readFileSync(path.join(assets,'index.html'),'utf8');
   for(const match of html.matchAll(/>([^<>]*[\u3400-\u9fff][^<>]*)<|(?:aria-label|title|placeholder)="([^"<>]*[\u3400-\u9fff][^"<>]*)"/g)) assert.ok(Object.hasOwn(catalog,(match[1]||match[2]).trim()),`Static app copy: ${match[1]||match[2]}`);
-  for(const dictionary of [catalog,siteCatalog])for(const [key,value] of Object.entries(dictionary)){
+  for(const name of siteLocales.slice(1))assert.deepEqual(Object.keys(siteCatalogs[name]),Object.keys(siteCatalog),`website ${name} catalog must have the same keys as en, in the same order`);
+  for(const dictionary of [catalog,...Object.values(siteCatalogs)])for(const [key,value] of Object.entries(dictionary)){
     const parameters=text=>[...text.matchAll(/\{(\d+)\}/g)].map(match=>match[1]).sort();
     assert.deepEqual(parameters(value),parameters(key),`Parameter mismatch in ${key}`);
   }
