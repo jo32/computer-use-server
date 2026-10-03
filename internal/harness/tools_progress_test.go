@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +29,7 @@ func TestLongPollReturnsWhenOutputArrives(t *testing.T) {
 	if _, err = invoke(t, r, "write_stdin", map[string]any{"session_id": id, "return_on": "later"}); ErrorCode(err) != "invalid_arguments" {
 		t.Fatalf("bad return_on: %v", err)
 	}
-	if _, err = invoke(t, r, "write_stdin", map[string]any{"session_id": id, "yield_time_ms": 55001}); err == nil {
+	if _, err = invoke(t, r, "write_stdin", map[string]any{"session_id": id, "yield_time_ms": 45001}); err == nil {
 		t.Fatal("wait above the limit accepted")
 	}
 }
@@ -168,5 +170,49 @@ func TestResultsDoNotRepeatTheirOwnJob(t *testing.T) {
 	}
 	if got := WithoutOwn(all, map[string]any{"session_id": "b", "running": false}); len(got) != 2 || got[0].Data["session_id"] != "a" {
 		t.Fatal("dropped the wrong job")
+	}
+}
+
+func TestAbandonedPollLeavesTheJobRunning(t *testing.T) {
+	r, _ := execForTest(t)
+	out, err := invoke(t, r, "exec_command", map[string]any{"command": "sleep 20", "yield_time_ms": 1})
+	if err != nil || asMap(t, out)["running"] != true {
+		t.Fatal(out.Value, err)
+	}
+	id := asMap(t, out)["session_id"]
+	// The client gives up on a long wait (timeout, disconnect, notifications/cancelled).
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	b, _ := json.Marshal(map[string]any{"session_id": id, "yield_time_ms": 30000})
+	if _, _, err := r.Invoke(ctx, "write_stdin", Invocation{Session: "test-session", Arguments: b}); err == nil {
+		t.Fatal("the abandoned wait should report its cancellation")
+	}
+	time.Sleep(300 * time.Millisecond)
+	after, err := invoke(t, r, "write_stdin", map[string]any{"session_id": id, "yield_time_ms": 1})
+	if err != nil || asMap(t, after)["running"] != true {
+		t.Fatalf("abandoning a wait killed the job: %v %v", after.Value, err)
+	}
+	// The same holds for an abandoned wait that wanted output, and for one that was sending input.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel2()
+	b, _ = json.Marshal(map[string]any{"session_id": id, "yield_time_ms": 30000, "return_on": "output"})
+	r.Invoke(ctx2, "write_stdin", Invocation{Session: "test-session", Arguments: b})
+	time.Sleep(300 * time.Millisecond)
+	if again, err := invoke(t, r, "write_stdin", map[string]any{"session_id": id, "yield_time_ms": 1}); err != nil || asMap(t, again)["running"] != true {
+		t.Fatalf("abandoning an output wait killed the job: %v %v", again.Value, err)
+	}
+	// An explicit terminate still stops it.
+	if res, err := invoke(t, r, "write_stdin", map[string]any{"session_id": id, "terminate": true}); err != nil || asMap(t, res)["terminated"] != true {
+		t.Fatalf("%v %v", res.Value, err)
+	}
+}
+func TestWaitCapFitsTheShortestRequestTimeoutOnTheRelayPath(t *testing.T) {
+	// The cloud relay dropped a request at about 55 s while 45 s worked.
+	if maxPollWait > 45000 {
+		t.Fatalf("maxPollWait is %d ms; waits above 45 s are cut off on the relay path", maxPollWait)
+	}
+	r, _ := execForTest(t)
+	if _, err := invoke(t, r, "write_stdin", map[string]any{"session_id": "x", "yield_time_ms": maxPollWait + 1}); ErrorCode(err) != "invalid_arguments" {
+		t.Fatalf("%v", err)
 	}
 }

@@ -8,11 +8,39 @@ wait are used only when the build has them). It reports, per task, the number
 of requests, the bytes returned (a proxy for tokens: about 3.5 bytes/token), the
 wall time, and whether the job completed.
 
-Usage: scripts/bench-tools.py OLD_BINARY NEW_BINARY [--quick]
+Usage:
+  scripts/bench-tools.py OLD_BINARY NEW_BINARY [--quick]   compare two builds
+  scripts/bench-tools.py --check BINARY                    guard: fail if BINARY exceeds scripts/bench-baseline.json
+  scripts/bench-tools.py --write-baseline BINARY           record the budgets from BINARY (a deliberate act)
+
+The guard exists so that no later feature quietly makes agents pay more tokens,
+make more requests, or lose jobs that used to finish. If a change must raise a
+budget, rewrite the baseline in the same commit and explain why in CHANGELOG.md.
 """
 import argparse, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASELINE = os.path.join(REPO, 'scripts', 'bench-baseline.json')
+HEADROOM = 1.05
+
+
+def make_workspace(ws):
+    """A fixed workspace, so budgets do not drift as the repository's own files change."""
+    def text(name, size):
+        out, n = [], 0
+        while n < size:
+            line = '%s line %d: the quick brown fox jumps over the lazy dog\n' % (name, len(out) + 1)
+            out.append(line)
+            n += len(line)
+        return ''.join(out)
+    for name, size in (('README.md', 47000), ('internal/server/server.go', 17000), ('internal/harness/registry.go', 12000), ('internal/computer/computer.go', 25000)):
+        path = os.path.join(ws, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, 'w').write(text(name, size))
+    for i in range(30):
+        path = os.path.join(ws, 'internal', 'harness', 'file%02d.go' % i)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, 'w').write(''.join('func name%d_%d() {}\n' % (i, j) for j in range(40)))
 BYTES_PER_TOKEN = 3.5
 
 
@@ -20,7 +48,7 @@ class Server:
     def __init__(self, label, binary, port, workspace, root):
         self.label, self.data = label, os.path.join(root, 'data-' + label)
         self.log = open(os.path.join(root, label + '.log'), 'w')
-        self.proc = subprocess.Popen([binary, '--data-dir', self.data, 'serve', '--foreground', '--workspace', workspace, '--allow-shell', '--no-chrome', '--no-update', '--gateway', '127.0.0.1:%d' % (port + 1), '--ui', '127.0.0.1:%d' % port], stdout=self.log, stderr=self.log, start_new_session=True)
+        self.proc = subprocess.Popen([binary, '--data-dir', self.data, 'serve', '--foreground', '--workspace', workspace, '--allow-shell', '--allow-computer', '--no-chrome', '--no-update', '--gateway', '127.0.0.1:%d' % (port + 1), '--ui', '127.0.0.1:%d' % port], stdout=self.log, stderr=self.log, start_new_session=True)
         self.base = None
         for _ in range(100):
             time.sleep(0.2)
@@ -47,6 +75,7 @@ class Client:
         self.instructions = len(init['instructions'])
         tools = self.rpc('tools/list')['tools']
         self.tools = {t['name'] for t in tools}
+        self.schemas = {t['name']: t['inputSchema'].get('properties', {}) for t in tools}
         self.tools_list_bytes = len(json.dumps(tools, separators=(',', ':')))
 
     def rpc(self, method, params=None):
@@ -72,6 +101,13 @@ class Client:
     def has(self, tool):
         return tool in self.tools
 
+    def supports(self, tool, param):
+        return param in self.schemas.get(tool, {})
+
+    def max_wait(self, tool):
+        """The longest wait the build allows, read from its schema like an agent would."""
+        return self.schemas.get(tool, {}).get('yield_time_ms', {}).get('maximum', 10000)
+
 
 def finished(text):
     return '[running' not in text and ('[exit code' in text or '[terminated' in text or '[timed out]' in text or '"exit_code"' in text)
@@ -84,12 +120,9 @@ def session_of(text):
 
 def wait_for_completion(c, sid):
     """Poll with the longest wait the build allows until the command ends."""
-    wait = 55000
+    wait = c.max_wait('write_stdin')
     while True:
         text, err = c.call('write_stdin', {'session_id': sid, 'yield_time_ms': wait})
-        if err and 'yield_time_ms' in text and wait > 20000:
-            wait = 20000  # an older build caps the wait at 20 s
-            continue
         if finished(text) or (err and 'session' in text):
             return text
 
@@ -129,21 +162,17 @@ def task_wait_silent_job(c, seconds):
 
 def task_two_jobs(c, a, b):
     ids = []
-    for s in (a, b):
-        t, _ = c.call('exec_command', {'command': 'sleep %d; echo job-%d-done' % (s, s), 'yield_time_ms': 300, 'background': True})
+    for secs in (a, b):
+        t, _ = c.call('exec_command', {'command': 'sleep %d; echo job-%d-done' % (secs, secs), 'yield_time_ms': 300, 'background': True})
         ids.append(session_of(t))
-    if c.has('list_tasks'):
-        text, err = c.call('list_tasks', {'wait': 'all', 'yield_time_ms': 55000})
-        if err:  # this build has list_tasks without waiting
-            text = ''
-        else:
-            while 'running' in text.replace('running ', 'running ') and re.search(r'running \d', text):
-                text, _ = c.call('list_tasks', {'wait': 'all', 'yield_time_ms': 55000})
-            return {'completed': True}
+    if c.supports('list_tasks', 'wait'):
+        while True:
+            text, _ = c.call('list_tasks', {'wait': 'all', 'yield_time_ms': c.max_wait('list_tasks')})
+            if not re.search(r'running \d', text):
+                return {'completed': True}
     done = 0
     for sid in ids:
-        text = wait_for_completion(c, sid)
-        done += 'done' in text
+        done += 'done' in wait_for_completion(c, sid)
     return {'completed': done == 2}
 
 
@@ -188,18 +217,80 @@ def run_build(label, binary, port, workspace, root, quick):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('old')
-    ap.add_argument('new')
-    ap.add_argument('--quick', action='store_true', help='shorter jobs (about 25 s instead of 70 s)')
-    ap.add_argument('--json', help='also write raw results to this file')
-    a = ap.parse_args()
+def run_one(binary):
     root = tempfile.mkdtemp(prefix='readyrig-bench-')
     ws = os.path.join(root, 'ws')
     os.makedirs(ws)
-    shutil.copy(os.path.join(REPO, 'README.md'), ws)
-    shutil.copytree(os.path.join(REPO, 'internal'), os.path.join(ws, 'internal'), ignore=shutil.ignore_patterns('node_modules', 'assets', '*.png', '*.jpg'))
+    make_workspace(ws)
+    try:
+        return run_build('guard', binary, 29771 + (os.getpid() % 100) * 2, ws, root, False)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def guard(a):
+    binary = a.check or a.write_baseline
+    results = run_one(binary)
+    if a.write_baseline:
+        tasks = {}
+        for name, r in results.items():
+            b = {'max_bytes': int(r['bytes'] * HEADROOM) + 16}
+            if name != 'session setup':
+                b['max_calls'] = r['calls']
+                if 'completed' in r:
+                    b['must_complete'] = bool(r['completed'])
+                if r['seconds'] >= 20:
+                    b['max_seconds'] = int(r['seconds']) + 20
+            tasks[name] = b
+        json.dump({'_about': 'Budgets for scripts/bench-tools.py --check. Rewrite only on purpose, in the same commit as the change that needs it, and say why in CHANGELOG.md.', 'tasks': tasks}, open(BASELINE, 'w'), indent=1)
+        print('wrote', BASELINE)
+        return 0
+    baseline = json.load(open(BASELINE))['tasks']
+    failures = []
+    print('%-44s %-22s %s' % ('task', 'calls / bytes (budget)', 'result'))
+    for name, b in baseline.items():
+        r = results.get(name)
+        if r is None:
+            failures.append('%s: task missing from the run' % name)
+            continue
+        problems = []
+        if 'max_calls' in b and r['calls'] > b['max_calls']:
+            problems.append('%d calls, budget %d' % (r['calls'], b['max_calls']))
+        if r['bytes'] > b['max_bytes']:
+            problems.append('%d bytes, budget %d' % (r['bytes'], b['max_bytes']))
+        if b.get('must_complete') and not r.get('completed'):
+            problems.append('the job did not complete')
+        if 'max_seconds' in b and r['seconds'] > b['max_seconds']:
+            problems.append('%ss, budget %ss' % (r['seconds'], b['max_seconds']))
+        calls = ('%d/%s' % (r['calls'], b.get('max_calls', '-')))
+        print('%-44s %-22s %s' % (name, '%s  %d/%d' % (calls, r['bytes'], b['max_bytes']), 'ok' if not problems else 'FAIL: ' + '; '.join(problems)))
+        failures += ['%s: %s' % (name, p) for p in problems]
+    if failures:
+        print('\nGUARD FAILED (%d):' % len(failures))
+        for f in failures:
+            print('  -', f)
+        return 1
+    print('\nguard passed')
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('old', nargs='?')
+    ap.add_argument('new', nargs='?')
+    ap.add_argument('--check', metavar='BINARY', help='guard mode: fail if the build exceeds the baseline budgets')
+    ap.add_argument('--write-baseline', metavar='BINARY', help='write the baseline budgets from this build')
+    ap.add_argument('--quick', action='store_true', help='shorter jobs (about 25 s instead of 70 s)')
+    ap.add_argument('--json', help='also write raw results to this file')
+    a = ap.parse_args()
+    if a.check or a.write_baseline:
+        return guard(a)
+    if not (a.old and a.new):
+        ap.error('give OLD and NEW binaries, or use --check / --write-baseline')
+    root = tempfile.mkdtemp(prefix='readyrig-bench-')
+    ws = os.path.join(root, 'ws')
+    os.makedirs(ws)
+    make_workspace(ws)
     results = {}
     threads = []
     for label, binary, port in (('old', a.old, 29331), ('new', a.new, 29441)):
@@ -227,4 +318,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main() or 0)

@@ -1,0 +1,38 @@
+{
+ "_about": "Budgets for scripts/bench-tools.py --check. Rewrite only on purpose, in the same commit as the change that needs it, and say why in CHANGELOG.md.",
+ "tasks": {
+  "session setup": {
+   "max_bytes": 19662
+  },
+  "survey: 4 files + search + list": {
+   "max_bytes": 126886,
+   "max_calls": 1
+  },
+  "508 KB command output": {
+   "max_bytes": 32416,
+   "max_calls": 1
+  },
+  "small ops (write, edit, read, 2 commands)": {
+   "max_bytes": 283,
+   "max_calls": 5
+  },
+  "wait for two jobs (20s, 25s)": {
+   "max_bytes": 805,
+   "max_calls": 3,
+   "must_complete": true,
+   "max_seconds": 45
+  },
+  "wait for a silent 50s job": {
+   "max_bytes": 307,
+   "max_calls": 3,
+   "must_complete": true,
+   "max_seconds": 70
+  },
+  "70s command, default timeout": {
+   "max_bytes": 307,
+   "max_calls": 3,
+   "must_complete": true,
+   "max_seconds": 90
+  }
+ }
+}

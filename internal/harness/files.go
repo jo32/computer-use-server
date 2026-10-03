@@ -355,7 +355,11 @@ func (f *Files) write(ctx context.Context, in Invocation) (Output, error) {
 	if err := writeAtomic(ctx, root, a.Path, b, mode); err != nil {
 		return Output{}, err
 	}
-	return Output{Value: map[string]any{"path": a.Path, "resolved_path": filepath.Join(root.Name(), a.Path), "bytes_written": len(b), "created": !existed}}, nil
+	verb := "wrote"
+	if !existed {
+		verb = "created"
+	}
+	return Output{Value: map[string]any{"path": a.Path, "resolved_path": filepath.Join(root.Name(), a.Path), "bytes_written": len(b), "created": !existed}, Text: fmt.Sprintf("%s %s (%d bytes)", verb, a.Path, len(b))}, nil
 }
 func (f *Files) edit(ctx context.Context, in Invocation) (Output, error) {
 	var a struct {
@@ -451,7 +455,8 @@ func (f *Files) edit(ctx context.Context, in Invocation) (Output, error) {
 	if a.ReplaceAll {
 		replacements = count
 	}
-	return Output{Value: map[string]any{"path": path, "resolved_path": filepath.Join(root.Name(), path), "replacements": replacements, "bytes_written": len(out), "first_line": firstLine, "snippet": numbered(from, lines[from-1:to])}}, nil
+	snippet := numbered(from, lines[from-1:to])
+	return Output{Value: map[string]any{"path": path, "resolved_path": filepath.Join(root.Name(), path), "replacements": replacements, "bytes_written": len(out), "first_line": firstLine, "snippet": snippet}, Text: fmt.Sprintf("edited %s: %d replacement(s), first at line %d\n%s", path, replacements, firstLine, snippet)}, nil
 }
 
 // entryInfo is one row of list_directory and glob output.

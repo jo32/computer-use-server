@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -227,5 +228,47 @@ func TestSingleProjectResultsCarryNoProjectTag(t *testing.T) {
 	out, _ = invoke(t, r, "read_file", map[string]any{"path": "x.txt"})
 	if _, has := asMap(t, out)["project"]; !has {
 		t.Fatal("with two projects the tag is needed")
+	}
+}
+
+func TestListTasksShowsRunningAndRecentFinishedOnly(t *testing.T) {
+	r, _ := execForTest(t)
+	for i := 0; i < 9; i++ {
+		if _, err := invokeAs(t, r, "hist", "exec_command", map[string]any{"command": fmt.Sprint("echo job-", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	running, err := invokeAs(t, r, "hist", "exec_command", map[string]any{"command": "sleep 20", "yield_time_ms": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := invokeAs(t, r, "hist", "list_tasks", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := asMap(t, out)["tasks"].([]map[string]any)
+	if len(tasks) != 6 || asMap(t, out)["older_finished"] != 4 {
+		t.Fatalf("want the running job and 5 finished, 4 hidden: %d tasks, %v hidden", len(tasks), asMap(t, out)["older_finished"])
+	}
+	if !strings.Contains(out.Text, "4 older finished sessions not shown") || !strings.Contains(out.Text, "running ") || !strings.Contains(out.Text, "echo job-8") || strings.Contains(out.Text, "echo job-3\n") {
+		t.Fatalf("the newest finished jobs and the running one must show:\n%s", out.Text)
+	}
+	found := false
+	for _, task := range tasks {
+		found = found || task["session_id"] == asMap(t, running)["session_id"]
+	}
+	if !found {
+		t.Fatal("a running job must never be hidden")
+	}
+	all, _ := invokeAs(t, r, "hist", "list_tasks", map[string]any{"finished": 100})
+	if n := len(asMap(t, all)["tasks"].([]map[string]any)); n != 10 || asMap(t, all)["older_finished"] != nil {
+		t.Fatalf("finished=100 must show everything: %d", n)
+	}
+	none, _ := invokeAs(t, r, "hist", "list_tasks", map[string]any{"finished": 0})
+	if n := len(asMap(t, none)["tasks"].([]map[string]any)); n != 1 {
+		t.Fatalf("finished=0 must leave only the running job: %d", n)
+	}
+	if _, err := invokeAs(t, r, "hist", "list_tasks", map[string]any{"finished": 101}); err == nil {
+		t.Fatal("limit above the maximum accepted")
 	}
 }
