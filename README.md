@@ -254,7 +254,7 @@ Fixed links require `cloudflared` 2025.4.0+ with `--token-file` support. The tok
 
 See [Cloudflare named tunnel setup](https://developers.cloudflare.com/tunnel/get-started/) and the [token-file parameter](https://developers.cloudflare.com/tunnel/reference/run-parameters/#token-file). Configure your account, domain, and DNS routes in Cloudflare.
 
-Quick Tunnels provide temporary sharing without a stable domain or availability guarantee. They support up to 200 concurrent requests and do not support SSE. The public console refreshes every five seconds; MCP uses JSON HTTP responses. See the [official Quick Tunnels documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
+Quick Tunnels provide temporary sharing without a stable domain or availability guarantee. They support up to 200 concurrent requests and do not support SSE. A temporary link checks its own public address about every 20 seconds and again shortly after the computer wakes from sleep. If the address stops answering, ReadyRig hides it and creates a new link, so the URL changes. It does not restart a link you stopped. The public console refreshes every five seconds; MCP uses JSON HTTP responses. See the [official Quick Tunnels documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
 
 ## Agent tools and APIs
 

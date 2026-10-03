@@ -34,6 +34,10 @@ type Options struct {
 	RedactSecrets  func(...string)
 	ProbeClient    *http.Client
 	StartupTimeout time.Duration
+	// HealthInterval is how often a quick tunnel checks its public address.
+	HealthInterval time.Duration
+	// Lookup reports whether the internet is reachable (tests replace it).
+	Lookup func(host string) error
 }
 
 type operation struct {
@@ -47,6 +51,12 @@ type operation struct {
 	registered        bool
 	host              string
 	announced         bool
+	target            string
+	// unhealthy: the public address stopped answering, so the URL stays withdrawn.
+	unhealthy bool
+	// recycle: replace this tunnel once it exits. A user stop clears it.
+	recycle  bool
+	recycles int
 }
 
 type Manager struct {
@@ -57,6 +67,7 @@ type Manager struct {
 	closed     bool
 	fixed      fixedConfig
 	fixedError string
+	quickPath  string
 }
 
 func New(opts Options) *Manager {
@@ -115,7 +126,7 @@ func (m *Manager) StartMode(target, mode string) error {
 		return errors.New("请先保存固定域名和 Tunnel Token")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &operation{ctx: ctx, cancel: cancel, done: make(chan struct{}), ready: make(chan struct{})}
+	r := &operation{ctx: ctx, cancel: cancel, done: make(chan struct{}), ready: make(chan struct{}), target: target}
 	message := "正在创建免登录隧道…"
 	if mode == "fixed" {
 		r.fixed = m.fixed
@@ -143,6 +154,7 @@ func (m *Manager) Stop() error {
 		return nil
 	}
 	m.status.State, m.status.Message, m.status.URL = "stopping", "正在关闭公网分享…", ""
+	r.recycle = false // a user stop always wins over an automatic replacement
 	m.mu.Unlock()
 	r.cancel()
 	m.changed()
@@ -181,7 +193,15 @@ func (m *Manager) finish(r *operation, err error) {
 	m.mu.Lock()
 	if m.run == r {
 		m.status.URL = ""
-		if r.ctx.Err() != nil {
+		if r.ctx.Err() != nil && r.recycle && !m.closed {
+			// The public address stopped answering. Replace the tunnel in the same
+			// locked step, so a user stop cannot slip in between and be overridden.
+			ctx, cancel := context.WithCancel(context.Background())
+			next := &operation{ctx: ctx, cancel: cancel, done: make(chan struct{}), ready: make(chan struct{}), target: r.target, recycles: r.recycles + 1}
+			m.status.State, m.status.Message, m.status.Error = "starting", "公网链接已失效，正在创建新的免登录隧道…", ""
+			m.run = next
+			go m.execute(next, r.target)
+		} else if r.ctx.Err() != nil {
 			m.status.State, m.status.Message, m.status.Error = "stopped", "公网分享已关闭", ""
 		} else {
 			if err == nil {
@@ -189,7 +209,9 @@ func (m *Manager) finish(r *operation, err error) {
 			}
 			m.status.State, m.status.Message, m.status.Error = "error", "分享未能保持连接，请重试", err.Error()
 		}
-		m.run = nil
+		if m.run == r {
+			m.run = nil
+		}
 	}
 	close(r.done)
 	m.mu.Unlock()
@@ -258,6 +280,8 @@ func (m *Manager) execute(r *operation, target string) {
 	}
 	if r.fixed.Token != "" {
 		go m.monitorFixed(r, target)
+	} else {
+		go m.monitorQuick(r, target)
 	}
 	wait := make(chan error, 1)
 	go func() { wait <- cmd.Wait() }()
@@ -311,7 +335,7 @@ func (m *Manager) observe(r *operation, line string) {
 		r.connectionVersion++
 		m.status.State, m.status.Message, m.status.URL = "starting", "连接中断，正在重新连接…", ""
 	}
-	if r.host != "" && r.registered {
+	if r.host != "" && r.registered && !r.unhealthy {
 		if r.fixed.Token == "" || r.verified {
 			m.publishReady(r)
 		} else {

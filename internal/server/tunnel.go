@@ -64,6 +64,7 @@ func (s *Server) startSharingMode(mode string) error {
 			target = u.String()
 		}
 	}
+	s.Tunnel.SetAccessPath(s.AccessPath)
 	return s.Tunnel.StartMode(target, mode)
 }
 
