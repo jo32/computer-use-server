@@ -189,8 +189,8 @@ func runTUI(f *flag.FlagSet, o *startupOptions) error {
 				}
 			case "p":
 				u.request("/api/pause", map[string]bool{"paused": !u.state.Paused}, results)
-			case "f", "t", "b", "c":
-				category := map[string]string{"f": "files", "t": "terminal", "b": "browser", "c": "computer"}[key]
+			case "f", "t", "b", "w", "c":
+				category := map[string]string{"f": "files", "t": "terminal", "b": "browser", "w": "safari", "c": "computer"}[key]
 				u.request("/api/capability", map[string]any{"category": category, "enabled": !u.state.Enabled[category]}, results)
 			case "h":
 				if u.state.Tunnel.State == "stopped" || u.state.Tunnel.State == "error" || u.state.Tunnel.State == "" {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,6 +29,9 @@ type Bridge struct {
 	wake       chan struct{}
 	startOnce  sync.Once
 	retryAfter time.Time
+	roots      func() []string
+	// linked run after Refresh, so another browser provider follows the same triggers.
+	linked []func()
 	// Dependencies remain injectable for deterministic tests without controlling a browser.
 	detect  func(context.Context, Options) (target, error)
 	launch  func(context.Context, string, []string, []string) (*client, error)
@@ -58,8 +62,39 @@ func (b *Bridge) Start(opts Options) error {
 	})
 	return nil
 }
+
+// SetRoots sets the folders the browser tools may read and write, normally the
+// approved projects. Call it before Start; RootsChanged reports later changes.
+func (b *Bridge) SetRoots(fn func() []string) {
+	b.mu.Lock()
+	b.roots = fn
+	b.mu.Unlock()
+}
+
+// RootsChanged makes the connected Chrome DevTools server fetch the folders again.
+func (b *Bridge) RootsChanged() {
+	b.mu.Lock()
+	c := b.client
+	b.mu.Unlock()
+	if c != nil {
+		c.notifyRootsChanged()
+	}
+}
 func (b *Bridge) Status() Status { b.mu.Lock(); defer b.mu.Unlock(); return b.status }
+
+// Link makes fn run whenever Refresh is called.
+func (b *Bridge) Link(fn func()) {
+	b.mu.Lock()
+	b.linked = append(b.linked, fn)
+	b.mu.Unlock()
+}
 func (b *Bridge) Refresh() {
+	b.mu.Lock()
+	linked := append([]func(){}, b.linked...)
+	b.mu.Unlock()
+	for _, fn := range linked {
+		fn()
+	}
 	select {
 	case b.wake <- struct{}{}:
 	default:
@@ -90,7 +125,7 @@ func (b *Bridge) disconnect() {
 	b.key = ""
 	b.mu.Unlock()
 	if c != nil {
-		b.registry.ReplaceCategory("browser", nil)
+		b.registry.ReplaceTools("browser", "chrome_", nil)
 		c.Close()
 		<-c.exited
 	}
@@ -160,6 +195,10 @@ func (b *Bridge) reconcile(ctx context.Context) {
 	c, err = b.launch(ctx, path, args, env)
 	if err == nil {
 		initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		b.mu.Lock()
+		roots := b.roots
+		b.mu.Unlock()
+		c.setRoots(roots)
 		err = c.initialize(initCtx)
 		var tools []harness.Tool
 		if err == nil {
@@ -178,7 +217,7 @@ func (b *Bridge) reconcile(ctx context.Context) {
 			b.client = c
 			b.key = t.Key
 			b.mu.Unlock()
-			b.registry.ReplaceCategory("browser", tools)
+			b.registry.ReplaceTools("browser", "chrome_", tools)
 			connection.Tools = len(tools)
 			b.setStatus(connection)
 			return
@@ -188,6 +227,19 @@ func (b *Bridge) reconcile(ctx context.Context) {
 	}
 	b.setStatus(Status{State: "error", Message: fmt.Sprintf("Chrome MCP 连接失败：%v", err)})
 	b.retryAfter = time.Now().Add(30 * time.Second)
+}
+
+// pathHint explains the one refusal that is about ReadyRig's setup, not the page.
+func pathHint(result map[string]any) string {
+	content, _ := result["content"].([]any)
+	for _, item := range content {
+		if m, _ := item.(map[string]any); m != nil {
+			if text, _ := m["text"].(string); strings.Contains(text, "configured workspace roots") {
+				return ". File paths must be inside an approved project (see list_projects) or the OS temp folder"
+			}
+		}
+	}
+	return ""
 }
 
 var toolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,57}$`)
@@ -266,7 +318,7 @@ func (b *Bridge) loadTools(ctx context.Context, c *client) ([]harness.Tool, erro
 				}
 				out := harness.Output{Value: result, MCPResult: result}
 				if failed, _ := result["isError"].(bool); failed {
-					return out, &harness.ToolError{Code: "browser_tool_failed", Message: "the Chrome DevTools tool reported an error; see the returned content"}
+					return out, &harness.ToolError{Code: "browser_tool_failed", Message: "the Chrome DevTools tool reported an error; see the returned content" + pathHint(result)}
 				}
 				return out, nil
 			}})

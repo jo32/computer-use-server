@@ -204,7 +204,7 @@ func run() (runErr error) {
 		a.Server.Tunnel = tunnel.New(tunnel.Options{Dir: filepath.Join(a.Server.Store.Dir, "cloudflared"), Command: opts.Cloudflared, Changed: a.Server.Registry.Signal, RedactSecrets: a.Server.Registry.AddSecrets})
 	}
 	a.Server.Projects.SetFullAccess(opts.FullAccess)
-	for category, enabled := range map[string]bool{"files": !opts.NoFiles, "terminal": opts.Shell, "computer": opts.Computer, "browser": !opts.NoChrome} {
+	for category, enabled := range map[string]bool{"files": !opts.NoFiles, "terminal": opts.Shell, "computer": opts.Computer, "browser": !opts.NoChrome, "safari": !opts.NoSafari} {
 		if err := a.Server.Registry.Enable(category, enabled); err != nil {
 			return err
 		}
@@ -212,6 +212,7 @@ func run() (runErr error) {
 	if err = a.Chrome.Start(chromemcp.Options{Disabled: opts.NoChrome, BrowserURL: opts.ChromeURL, UserDataDir: opts.ChromeProfile, Command: opts.ChromeCommand}); err != nil {
 		return err
 	}
+	a.Safari.Start(chromemcp.SafariOptions{Disabled: opts.NoSafari})
 	if opts.AllowIP != "" {
 		for _, v := range strings.Split(opts.AllowIP, ",") {
 			_, cidr, e := net.ParseCIDR(strings.TrimSpace(v))

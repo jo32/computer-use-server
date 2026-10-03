@@ -42,6 +42,7 @@ type Server struct {
 	Store                                     *store.Store
 	Computer                                  *computer.Computer
 	Chrome                                    *chromemcp.Bridge
+	Safari                                    *chromemcp.SafariBridge
 	Updates                                   *update.Manager
 	Tunnel                                    *tunnel.Manager
 	Cloud                                     *cloud.Client
@@ -58,8 +59,8 @@ type Server struct {
 	inflight                                  map[string]context.CancelFunc
 	openLocalPath                             localPathOpener
 	openSystemSettings                        systemSettingsOpener
-}
 	requestPermission                         func(kind string)
+}
 
 // LocalCLI identifies the command and instance to use for local configuration.
 // It contains no connection credentials and is excluded from the public console.
@@ -165,6 +166,10 @@ func (s *Server) UI() http.Handler {
 		if s.Chrome != nil {
 			chrome = s.Chrome.Status()
 		}
+		safari := chromemcp.Status{State: "disabled", Message: "Safari MCP 未启动"}
+		if s.Safari != nil {
+			safari = s.Safari.Status()
+		}
 		remote := isPublicUI(r)
 		gateway, origin := s.connection(r)
 		var updates any
@@ -177,7 +182,7 @@ func (s *Server) UI() http.Handler {
 			cliState = s.CLI
 			localCLI = s.LocalCLI
 		}
-		write(w, map[string]any{"public": remote, "paused": paused, "enabled": enabled, "summary": summary, "sessions": sessions, "tools": s.Registry.Specs(), "permissions": s.Computer.Permissions(), "workspace": s.activeWorkspace(), "project_access": s.projectState(), "local_open": localopen.Supported(), "gateway": gateway, "gateway_origin": origin, "version": buildinfo.Version, "chrome": chrome, "update": updates, "cloud": cloudState, "cli": cliState, "local_cli": localCLI, "tunnel": s.tunnelStatus(remote)})
+		write(w, map[string]any{"public": remote, "paused": paused, "enabled": enabled, "summary": summary, "sessions": sessions, "tools": s.Registry.Specs(), "permissions": s.Computer.Permissions(), "workspace": s.activeWorkspace(), "project_access": s.projectState(), "local_open": localopen.Supported(), "gateway": gateway, "gateway_origin": origin, "version": buildinfo.Version, "chrome": chrome, "safari": safari, "update": updates, "cloud": cloudState, "cli": cliState, "local_cli": localCLI, "tunnel": s.tunnelStatus(remote)})
 	})
 	mux.HandleFunc("POST /api/chrome/refresh", func(w http.ResponseWriter, r *http.Request) {
 		if s.Chrome != nil {

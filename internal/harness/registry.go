@@ -144,7 +144,7 @@ type Registry struct {
 }
 
 func New(s *store.Store, secrets ...string) *Registry {
-	return &Registry{tools: map[string]Tool{}, active: map[string]activeCall{}, enabled: map[string]bool{"system": true, "files": true, "terminal": false, "computer": false, "browser": true}, locks: map[string]chan struct{}{}, listGen: make(chan struct{}), subs: map[int]subscription{}, pending: map[string][]Event{}, progressSent: map[string]time.Time{}, store: s, notify: make(chan struct{}), secrets: secrets}
+	return &Registry{tools: map[string]Tool{}, active: map[string]activeCall{}, enabled: map[string]bool{"system": true, "files": true, "terminal": false, "computer": false, "browser": true, "safari": true}, locks: map[string]chan struct{}{}, listGen: make(chan struct{}), subs: map[int]subscription{}, pending: map[string][]Event{}, progressSent: map[string]time.Time{}, store: s, notify: make(chan struct{}), secrets: secrets}
 }
 
 // SessionOrDefault is the session name a call without one is recorded under.
@@ -461,17 +461,23 @@ func (r *Registry) Specs() []Spec {
 
 // ReplaceCategory atomically publishes (or withdraws) discovered tools.
 func (r *Registry) ReplaceCategory(category string, tools []Tool) {
+	r.ReplaceTools(category, "", tools)
+}
+
+// ReplaceTools replaces the tools of one provider in a category: those whose names
+// start with prefix. Two browsers can share the browser category this way.
+func (r *Registry) ReplaceTools(category, prefix string, tools []Tool) {
 	r.mu.Lock()
 	order := make([]string, 0, len(r.order)+len(tools))
 	for _, name := range r.order {
-		if r.tools[name].Spec.Category == category {
+		if r.tools[name].Spec.Category == category && strings.HasPrefix(name, prefix) {
 			delete(r.tools, name)
 		} else {
 			order = append(order, name)
 		}
 	}
 	for _, t := range tools {
-		if t.Spec.Category != category {
+		if t.Spec.Category != category || !strings.HasPrefix(t.Spec.Name, prefix) {
 			r.mu.Unlock()
 			panic("tool category mismatch")
 		}

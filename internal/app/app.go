@@ -18,6 +18,7 @@ type App struct {
 	Processes *harness.Processes
 	Files     *harness.Files
 	Chrome    *chromemcp.Bridge
+	Safari    *chromemcp.SafariBridge
 }
 
 // LockData lets offline CLI configuration changes use the same instance lock as
@@ -106,9 +107,26 @@ func New(workspace, dataDir string) (*App, error) {
 	}
 	registry.OnPause = processes.Stop
 	chrome := chromemcp.New(registry)
+	// The browser tools may save files, such as screenshots, inside approved projects.
+	approvedRoots := func() []string {
+		state := projects.Snapshot()
+		roots := make([]string, 0, len(state.Projects)+1)
+		for _, project := range state.Projects {
+			roots = append(roots, project.Path)
+		}
+		if state.FullAccess {
+			roots = append(roots, string(filepath.Separator))
+		}
+		return roots
+	}
+	chrome.SetRoots(approvedRoots)
+	safari := chromemcp.NewSafari(registry)
+	safari.SetRoots(approvedRoots)
+	chrome.Link(safari.Refresh)
+	projects.OnChange = chrome.RootsChanged
 	sharing := tunnel.New(tunnel.Options{Dir: filepath.Join(dataDir, "cloudflared"), Changed: registry.Signal, RedactSecrets: registry.AddSecrets})
 	ready = true
-	return &App{unlock: unlock, Server: &server.Server{Registry: registry, Projects: projects, Store: s, Computer: c, Chrome: chrome, Tunnel: sharing, Workspace: workspace, AccessPath: accessPath, UIKey: uiKey}, Processes: processes, Files: files, Chrome: chrome}, nil
+	return &App{unlock: unlock, Server: &server.Server{Registry: registry, Projects: projects, Store: s, Computer: c, Chrome: chrome, Safari: safari, Tunnel: sharing, Workspace: workspace, AccessPath: accessPath, UIKey: uiKey}, Processes: processes, Files: files, Chrome: chrome, Safari: safari}, nil
 }
 func (a *App) Close() {
 	if a.Server.Cloud != nil {
@@ -117,6 +135,7 @@ func (a *App) Close() {
 	a.Server.Tunnel.Close()
 	a.Server.Registry.SetPaused(true)
 	a.Chrome.Close()
+	a.Safari.Close()
 	a.Processes.Stop()
 	a.Server.Registry.WaitBackground()
 	a.Files.Close()

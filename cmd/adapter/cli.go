@@ -314,10 +314,10 @@ func controlAction(mode string, args []string, o *startupOptions) (method, path 
 		path, input = "/api/projects", v
 	case "capability":
 		if len(args) != 2 || (args[1] != "on" && args[1] != "off") {
-			bad("capability <files|terminal|browser|computer> <on|off>")
+			bad("capability <files|terminal|browser|safari|computer> <on|off>")
 			break
 		}
-		if args[0] != "files" && args[0] != "terminal" && args[0] != "browser" && args[0] != "computer" {
+		if args[0] != "files" && args[0] != "terminal" && args[0] != "browser" && args[0] != "safari" && args[0] != "computer" {
 			err = errors.New("unknown capability")
 			break
 		}

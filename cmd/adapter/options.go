@@ -16,10 +16,10 @@ import (
 )
 
 type startupOptions struct {
-	Workspace, DataDir, Gateway, UI, Cloudflared, CloudURL, AllowIP string
-	ChromeURL, ChromeProfile, ChromeCommand, UpdateRepo, UpdateFeed string
-	FullAccess, Share, Shell, Computer, NoFiles, NoChrome, NoUpdate bool
-	Foreground                                                      bool
+	Workspace, DataDir, Gateway, UI, Cloudflared, CloudURL, AllowIP           string
+	ChromeURL, ChromeProfile, ChromeCommand, UpdateRepo, UpdateFeed           string
+	FullAccess, Share, Shell, Computer, NoFiles, NoChrome, NoSafari, NoUpdate bool
+	Foreground                                                                bool
 }
 
 const configFile = "cli.json"
@@ -41,6 +41,7 @@ func startupFlags(home, dataDir string, saved bool) (*flag.FlagSet, *startupOpti
 	f.BoolVar(&o.NoFiles, "no-files", false, "Disable project file tools")
 	f.StringVar(&o.AllowIP, "allow-ip", "", "Comma-separated peer IP CIDRs for gateway")
 	f.BoolVar(&o.NoChrome, "no-chrome", false, "Disable automatic Chrome DevTools MCP bridge")
+	f.BoolVar(&o.NoSafari, "no-safari", false, "Disable the Safari MCP bridge (Safari 27+ on macOS)")
 	f.StringVar(&o.ChromeURL, "chrome-browser-url", "", "Existing Chrome debugging HTTP URL on loopback")
 	f.StringVar(&o.ChromeProfile, "chrome-user-data-dir", "", "Chrome profile containing DevToolsActivePort")
 	f.StringVar(&o.ChromeCommand, "chrome-mcp-command", "", "Installed Chrome MCP executable")
@@ -130,6 +131,8 @@ func capabilitySetting(category string, enabled bool) (string, bool) {
 		return "allow-computer", enabled
 	case "browser":
 		return "no-chrome", !enabled
+	case "safari":
+		return "no-safari", !enabled
 	default:
 		return "", false
 	}
@@ -156,13 +159,13 @@ func saveCapabilityConfig(dir, category string, enabled bool) error {
 // Replayed daemon/app launch flags must reflect the switches at shutdown.
 func capabilityRestartArgs(args []string, flags *flag.FlagSet, enabled map[string]bool) []string {
 	settings := map[string]bool{}
-	for _, category := range []string{"files", "terminal", "computer", "browser"} {
+	for _, category := range []string{"files", "terminal", "computer", "browser", "safari"} {
 		name, value := capabilitySetting(category, enabled[category])
 		settings[name] = value
 	}
 	result := make([]string, 0, len(args)+len(settings))
 	appendSettings := func() {
-		for _, name := range []string{"no-files", "allow-shell", "allow-computer", "no-chrome"} {
+		for _, name := range []string{"no-files", "allow-shell", "allow-computer", "no-chrome", "no-safari"} {
 			result = append(result, "--"+name+"="+fmt.Sprint(settings[name]))
 		}
 	}

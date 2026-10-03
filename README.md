@@ -151,7 +151,7 @@ Use global `--data-dir /private/path` before or after a command for another inst
 - **Connection** provides the current agent URL and MCP configuration, system permission status, capability switches, sharing, and software updates. **Local configuration → Copy setup prompt** gives a local terminal-capable agent CLI instructions using this instance’s exact executable and data directory. The preview and copied prompt follow the selected language and explain which changes need a restart. This entry is available only in the local console.
 - **Pause control** cancels active calls and terminal process groups and rejects new tool calls. Disabling one capability cancels only calls in that category.
 
-File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations can be enabled locally, explicitly through `--allow-shell` and `--allow-computer`, or through saved CLI startup settings for the app and `serve`/`web`. All four capability switches remember the last selection. `--no-files` and `--no-chrome` disable file and browser tools on launch. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
+File tools and Chrome detection are enabled by default. Chrome tools can be listed before the browser connects, but execution requires a ready debugging connection. Terminal and desktop operations can be enabled locally, explicitly through `--allow-shell` and `--allow-computer`, or through saved CLI startup settings for the app and `serve`/`web`. All five capability switches remember the last selection. `--no-files`, `--no-chrome` and `--no-safari` disable the file, Chrome and Safari tools on launch. The agent API cannot change permissions or resume paused control. A bound cloud account can manage the supported switches described below.
 
 On macOS, left-click the menu bar computer icon to open the quick panel; clicking outside dismisses it. Right-click for the native menu to open the full window, pause or resume, check for updates, or quit. Closing the main window keeps the service running; quitting stops it. The icon animates during tool execution, indicates pause, and respects Reduce Motion.
 
@@ -208,7 +208,7 @@ Only local HTTP debugging URLs are accepted, without redirects or remote WebSock
 
 Browser calls log arguments, duration, results, and failures and can be filtered by the browser category. The bridge preserves upstream schemas, annotations, text, images, and `structuredContent`. Browser screenshots appear in call details and JSON logs, but are excluded from desktop replay and desktop snapshot counts. Calls execute serially with a two-minute limit. Pause or cancellation disconnects the MCP subprocess; it reconnects after control resumes without closing your Chrome or retrying previously issued actions. Completed browser actions cannot be undone.
 
-Chrome MCP can access the attached browser profile and may use upload/save tools to access local files available to your account. ReadyRig's file-tool project boundaries do not constrain those tools. Upstream usage statistics and CrUX queries are disabled by default. ReadyRig manages its own MCP subprocess; it cannot share another client's existing stdio process.
+Chrome MCP can access the attached browser profile. Its upload and save tools, such as a screenshot's `filePath`, may only use paths inside your approved projects or the OS temp folder: ReadyRig declares the approved projects to the Chrome DevTools server, tells it again when they change, and a path anywhere else is refused with a message that says so. Full Access widens this to every folder. Upstream usage statistics and CrUX queries are disabled by default. ReadyRig manages its own MCP subprocess; it cannot share another client's existing stdio process.
 
 See the [upstream guide to connecting to a running Chrome instance](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/advanced-usage.md#connecting-to-a-running-chrome-instance).
 
@@ -217,6 +217,24 @@ See the [upstream guide to connecting to a running Chrome instance](https://gith
 Chrome 144+ remote debugging exposes a WebSocket endpoint; a `404` from `/json/version` is expected in this mode. ReadyRig recognizes the approval server on local port `9222` (or the explicitly configured debugging URL) and connects to `/devtools/browser` without needing to read `DevToolsActivePort`. Detection uses an unsupported WebSocket path that Chrome rejects before asking for approval, so background checks do not trigger permission dialogs. The first browser operation still requires approval in Chrome. The endpoint file remains a fallback for discovering other ports.
 
 If the local debugging server cannot be detected and macOS blocks the endpoint file, click **Authorize debugging file** in the desktop app and select `DevToolsActivePort` inside the Chrome folder. ReadyRig then detects the endpoint again. Alternatively, configure `--chrome-browser-url` with the address shown in Chrome's remote debugging page to connect without reading the file. Cancelling the dialog leaves permissions unchanged. If access is still denied, check ReadyRig's data access under **System Settings → Privacy & Security**; in browser mode, grant access to the terminal that starts ReadyRig. You must still approve the first browser connection in Chrome. Only the local desktop window can open this system dialog.
+
+## Safari MCP
+
+Safari 27 and later has an MCP server built in (`safaridriver --mcp`). ReadyRig bridges it the way it bridges Chrome, so Safari's tools appear as `safari_*` next to the Chrome tools. Safari has a switch of its own, separate from Chrome's: the toggle under Connection, `readyrig capability safari on|off`, the `w` key in the terminal dashboard, or `--no-safari`. The choice is saved like the others.
+
+1. Use macOS 27 or later with Safari 27 or later. ReadyRig checks that `/usr/bin/safaridriver` offers `--mcp`. On any other system the Safari tools do not appear, and `safari` in `GET /api/state` says why.
+2. In Safari, turn on the Develop menu, open **Safari > Settings > Developer**, and check **Allow remote automation and external agents**. ReadyRig cannot do this for you. Until it is on, a Safari call fails with an error that names this setting, and the Safari status becomes `permission_required`.
+3. Start with `safari_create_tab` or `safari_navigate_to_url`. Safari opens a window it controls and shows a banner. Other tools can fail before such a window exists.
+
+Safari's tools are exposed lazily. ReadyRig reads the tool list once with a short-lived process and does not connect to Safari until a Safari tool is first called. The connection then lasts until the app quits, the browser switch is turned off, or a call is cancelled, and a failed call is never retried by itself. Only five everyday tools are advertised in `tools/list`; `help` lists the other twelve and `use_tool` runs them, for example `{"name":"safari_list_tabs","arguments":{}}`. Safari's names are shortened where they repeated themselves: `browser_dialogs` is `safari_dialogs`.
+
+Safari's server sends no read-only hints, so ReadyRig marks the tools that only read (`safari_get_page_content`, `safari_screenshot`, `safari_list_tabs`, `safari_page_info`, `safari_console_messages`, the network listings and `safari_wait_for_navigation`).
+
+The dashboard shows Safari next to Chrome, in the Tools list and as a card under Connection with a short setup guide. The card reads Connected, Authorization required (remote automation is off) or Needs setup (this Mac has no Safari MCP), in both languages.
+
+Safari's server writes files wherever it is told, and it has no notion of projects. So ReadyRig checks `savePath` on `safari_screenshot` and `safari_get_page_content` itself: it must be an absolute path inside an approved project, with `..` and symbolic links resolved, or the call is refused before it reaches Safari.
+
+As with Chrome, a Safari window can reach whatever you are signed in to, `safari_evaluate_javascript` runs code in the page, and a `file://` page can show local files. Turn off the Safari switch to remove Safari while keeping Chrome, or the other way round.
 
 ## Remote access and sharing
 
@@ -281,6 +299,7 @@ REST, MCP, OpenAPI, and the console share one tool registry.
 | `computer_app` | List windows; open or focus an application | Serial (computer) |
 | `computer_clipboard` | Read or replace clipboard text | Serial (computer) |
 | `chrome_*` | Dynamically discovered official Chrome DevTools MCP tools | Serial (browser) |
+| `safari_*` | Dynamically discovered tools of Safari's built-in MCP server (Safari 27+) | Serial (browser) |
 
 "Serial" means one call at a time within that capability: a slow browser call no longer delays a file write or a screenshot. Mutating tools also accept an optional one-line `description`, shown in the activity log and not passed to the tool. When it is omitted ReadyRig writes a short label itself, such as the first words of a command or `edit src/a.go`.
 
@@ -294,7 +313,7 @@ Use `{"name":"exec_command"}` to inspect one tool even when disabled, or `{"incl
 
 ### Tool listing and advanced tools
 
-`tools/list` advertises only tools whose capability is enabled, so a model is not shown tools that would fail. The REST catalogue and the local Tools page still list everything. The twelve Chrome DevTools inspection tools that most browsing tasks do not need (console and network inspection, CSS styles, emulation, resizing, Lighthouse, performance traces, heap snapshots) form the `advanced` group: they stay callable but are left out of `tools/list`. `help` shows them, and `use_tool` with `{"name":"chrome_list_network_requests","arguments":{...}}` runs one. Set `READYRIG_EXPOSE_ALL_TOOLS=1` before starting ReadyRig to advertise them anyway.
+`tools/list` advertises only tools whose capability is enabled, so a model is not shown tools that would fail. The REST catalogue and the local Tools page still list everything. The twelve Chrome DevTools inspection tools that most browsing tasks do not need (console and network inspection, CSS styles, emulation, resizing, Lighthouse, performance traces, heap snapshots) form the `advanced` group: they stay callable but are left out of `tools/list`. `help` shows them, and `use_tool` with `{"name":"chrome_list_network_requests","arguments":{...}}` runs one. Safari's tools work the same way: five everyday ones (`safari_create_tab`, `safari_navigate_to_url`, `safari_get_page_content`, `safari_page_interactions`, `safari_screenshot`) are listed, and the other twelve (`safari_list_tabs`, `safari_evaluate_javascript`, `safari_dialogs`, and so on) are in the `advanced` group. Set `READYRIG_EXPOSE_ALL_TOOLS=1` before starting ReadyRig to advertise them all.
 
 ### File tools
 
@@ -444,7 +463,7 @@ For the website and cloud service, see [website/README.md](website/README.md) an
 cmd/adapter/         Launch options, HTTP entry points, application lifecycle
 internal/brand/      Shared ReadyRig icon assets
 internal/harness/    Tool specs, registry, dispatch, pause, files, projects, terminal
-internal/chromemcp/  Chrome discovery, official MCP stdio bridge, dynamic tools
+internal/chromemcp/  Chrome discovery and Safari's built-in MCP server: stdio bridges, dynamic tools
 internal/cloud/      Account binding, device credentials, heartbeats, command receipts
 internal/tunnel/     Temporary/fixed tunnels, credentials, validation, downloads, diagnostics
 internal/computer/   Replaceable driver, screenshot compression, coordinates, macOS input

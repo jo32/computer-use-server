@@ -6,7 +6,7 @@ import (
 )
 
 func capabilityCategory(category string) bool {
-	return category == "files" || category == "terminal" || category == "computer" || category == "browser"
+	return category == "files" || category == "terminal" || category == "computer" || category == "browser" || category == "safari"
 }
 
 // Serialize persistence and activation across local and bound-account controls.

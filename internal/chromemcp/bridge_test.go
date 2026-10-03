@@ -29,14 +29,38 @@ func TestMCPHelperProcess(t *testing.T) {
 			ID     any                        `json:"id"`
 			Method string                     `json:"method"`
 			Params map[string]json.RawMessage `json:"params"`
+			Result json.RawMessage            `json:"result"`
+			Error  json.RawMessage            `json:"error"`
 		}
 		_ = json.Unmarshal(scanner.Bytes(), &req)
+		// READYRIG_MCP_TEST_OUT collects what the client declared and answered.
+		record := func(v map[string]any) {
+			if path := os.Getenv("READYRIG_MCP_TEST_OUT"); path != "" {
+				f, _ := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+				_ = json.NewEncoder(f).Encode(v)
+				f.Close()
+			}
+		}
+		if req.Method == "" && req.ID != nil { // a reply to a request this child sent
+			record(map[string]any{"kind": "response", "id": req.ID, "result": req.Result, "error": req.Error})
+			continue
+		}
 		var result any
 		switch req.Method {
 		case "initialize":
+			record(map[string]any{"kind": "capabilities", "value": req.Params["capabilities"]})
 			result = map[string]any{"protocolVersion": "2025-06-18"}
 		case "notifications/initialized":
 			initialized = true
+			if os.Getenv("READYRIG_MCP_TEST_ROOTS") == "1" {
+				// Id 2 is the id of the tools/list call pending right now: a server
+				// request must never be taken for its reply.
+				fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":2,"method":"roots/list"}`)
+				fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","id":"s-3","method":"sampling/createMessage","params":{}}`)
+			}
+			continue
+		case "notifications/roots/list_changed":
+			record(map[string]any{"kind": "notification", "method": req.Method})
 			continue
 		case "tools/list":
 			if !initialized {
@@ -68,6 +92,10 @@ func TestMCPHelperProcess(t *testing.T) {
 }
 func testBridge(t *testing.T) (*Bridge, *harness.Registry, *store.Store) {
 	t.Helper()
+	return testBridgeWith(t, nil)
+}
+func testBridgeWith(t *testing.T, setup func(*Bridge)) (*Bridge, *harness.Registry, *store.Store) {
+	t.Helper()
 	s, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +105,9 @@ func testBridge(t *testing.T) (*Bridge, *harness.Registry, *store.Store) {
 	b.detect = func(context.Context, Options) (target, error) { return target{Key: "test"}, nil }
 	b.resolve = func(Options, target) (string, []string, []string, error) {
 		return os.Args[0], []string{"-test.run=^TestMCPHelperProcess$"}, append(os.Environ(), "READYRIG_MCP_TEST_CHILD=1"), nil
+	}
+	if setup != nil {
+		setup(b)
 	}
 	if err := b.Start(Options{}); err != nil {
 		t.Fatal(err)

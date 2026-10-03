@@ -30,6 +30,8 @@ type Projects struct {
 	mu    sync.RWMutex
 	state ProjectState
 	file  string
+	// OnChange runs, without any lock held, after the project list or Full Access changes.
+	OnChange func()
 	// pins remembers which project each agent session's relative paths mean,
 	// so changing the default in the dashboard never moves a running session.
 	pinMu sync.Mutex
@@ -117,10 +119,20 @@ func (p *Projects) Snapshot() ProjectState {
 }
 func (p *Projects) SetFullAccess(enabled bool) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.state.FullAccess = enabled
+	p.mu.Unlock()
+	if p.OnChange != nil {
+		p.OnChange()
+	}
 }
 func (p *Projects) Change(action, id, name, path string) error {
+	err := p.change(action, id, name, path)
+	if err == nil && p.OnChange != nil {
+		p.OnChange()
+	}
+	return err
+}
+func (p *Projects) change(action, id, name, path string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	old := p.state

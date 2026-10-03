@@ -69,3 +69,61 @@ test('completed call details are reused while running calls keep refreshing', as
   await h.loadDetail();
   assert.equal(requests, 1);
 });
+
+// The Safari card and the rule for which browser a tool waits for.
+function safariHarness(data) {
+  const element = () => ({ textContent: '', classList: { toggle(name, on) { this.ready = on; } } });
+  const els = { status: [element()], message: [element()], diagnostic: [element()], indicator: [element()] };
+  const selectors = { '[data-safari-status]': els.status, '[data-safari-message]': els.message, '[data-safari-diagnostic]': els.diagnostic, '[data-safari-indicator]': els.indicator };
+  const context = {
+    t: (s, v) => v ? s.replace(/\{(\d+)\}/g, (_, n) => v[n]) : s,
+    state: { data },
+    document: { querySelectorAll: selector => selectors[selector] || [] },
+  };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('function browserPending('), source.indexOf('function renderChrome(')) + '\nglobalThis.browserPending = browserPending; globalThis.renderSafari = renderSafari;', context);
+  return { context, els };
+}
+
+test('a browser tool waits for its own browser, not for the other one', () => {
+  const { context } = safariHarness({});
+  const chromeTool = { name: 'chrome_take_snapshot', category: 'browser' };
+  const safariTool = { name: 'safari_create_tab', category: 'safari' };
+  const idle = { chrome: { state: 'waiting', message: 'Waiting for Chrome' }, safari: { state: 'ready' } };
+  assert.equal(context.browserPending(chromeTool, idle), 'Waiting for Chrome');
+  assert.equal(context.browserPending(safariTool, idle), '', 'Safari tools run while Chrome is down');
+  const other = { chrome: { state: 'ready' }, safari: { state: 'unavailable', message: 'No Safari MCP' } };
+  assert.equal(context.browserPending(chromeTool, other), '');
+  assert.equal(context.browserPending(safariTool, other), 'No Safari MCP');
+  // Safari still takes a call while it waits for remote automation: the answer says how to turn it on.
+  assert.equal(context.browserPending(safariTool, { safari: { state: 'permission_required' } }), '');
+  assert.equal(context.browserPending(chromeTool, { chrome: { state: 'permission_required' } }) !== '', true, 'Chrome keeps its stricter rule');
+  assert.equal(context.browserPending({ name: 'read_file', category: 'files' }, {}), '');
+  assert.equal(context.browserPending(safariTool, {}), 'Safari MCP 尚未启动', 'a missing status counts as not started');
+});
+
+test('the Safari card shows each state, and pause or a closed browser switch win over it', () => {
+  const show = (safari, extra = {}) => {
+    const h = safariHarness({ enabled: { safari: true }, paused: false, safari, ...extra });
+    h.context.renderSafari();
+    return { status: h.els.status[0].textContent, message: h.els.message[0].textContent, diagnostic: h.els.diagnostic[0].textContent, ready: h.els.indicator[0].classList.ready };
+  };
+  const ready = show({ state: 'ready', tools: 17, message: 'ok' });
+  assert.equal(ready.status, '已接入');
+  assert.ok(ready.message.includes('17'), 'the tool count is shown');
+  assert.equal(ready.ready, true);
+  const permission = show({ state: 'permission_required', tools: 17, message: 'Turn it on' });
+  assert.equal(permission.status, '需要授权');
+  assert.equal(permission.diagnostic, 'Turn it on');
+  assert.equal(permission.ready, false);
+  assert.equal(show({ state: 'unavailable', message: 'needs Safari 27' }).status, '需要配置');
+  assert.equal(show({ state: 'error', message: 'x' }).status, '连接失败');
+  assert.equal(show({ state: 'ready', tools: 17 }, { paused: true }).status, '已暂停');
+  const off = show({ state: 'ready', tools: 17 }, { enabled: { safari: false } });
+  assert.equal(off.status, '已关闭');
+  assert.equal(off.ready, false);
+  // A server that does not report Safari yet is shown as waiting, not as a crash.
+  const none = safariHarness({ enabled: { safari: true }, paused: false });
+  none.context.renderSafari();
+  assert.equal(none.els.status[0].textContent, '等待检测');
+});
