@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -256,7 +257,7 @@ func TestStructuredErrorsAndSchemaConstraints(t *testing.T) {
 	if _, err = invoke(t, r, "typed", map[string]any{}); ErrorCode(err) != "control_paused" {
 		t.Fatalf("%q", ErrorCode(err))
 	}
-	if ErrorCode(context.Canceled) != "cancelled" || ErrorCode(nil) != "" || ErrorCode(os.ErrNotExist) != "tool_error" {
+	if ErrorCode(context.Canceled) != "cancelled" || ErrorCode(nil) != "" || ErrorCode(os.ErrNotExist) != "not_found" || ErrorCode(os.ErrPermission) != "permission_denied" || ErrorCode(os.ErrExist) != "file_exists" || ErrorCode(errors.New("boom")) != "tool_error" {
 		t.Fatal("ErrorCode classification")
 	}
 }

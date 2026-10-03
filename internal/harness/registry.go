@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"strings"
 	"sync"
@@ -78,6 +79,12 @@ func ErrorCode(err error) string {
 		return "cancelled"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
+	case errors.Is(err, fs.ErrNotExist):
+		return "not_found"
+	case errors.Is(err, fs.ErrPermission):
+		return "permission_denied"
+	case errors.Is(err, fs.ErrExist):
+		return "file_exists"
 	}
 	return "tool_error"
 }
@@ -124,6 +131,9 @@ type Registry struct {
 	progressSent  map[string]time.Time
 	progressEvery time.Duration
 	nextSub       int
+	// PermissionCheck reports an operating-system permission a tool still lacks
+	// (empty when it can run). Tools that lack one fail fast with permission_required.
+	PermissionCheck func(Spec) string
 	// ExposeAll lists advanced tools in tools/list too.
 	ExposeAll bool
 	store     *store.Store
@@ -173,7 +183,7 @@ func addDescription(schema map[string]any) {
 		return
 	}
 	if _, exists := props["description"]; !exists {
-		props["description"] = Prop("string", "Optional one-line intent shown in the activity log")
+		props["description"] = Prop("string", "Activity-log label (optional)")
 	}
 }
 func stripDescription(raw json.RawMessage) json.RawMessage {
@@ -322,6 +332,73 @@ func (r *Registry) ProgressFor(session, tool string) []Event {
 		out = append(out[:5], Event{Session: session, Kind: "task_progress", Data: map[string]any{"text": fmt.Sprintf("+%d more running tasks; list_tasks shows all", extra)}})
 	}
 	return out
+}
+
+// labelled gives a mutating call that has no description a short one derived
+// from its arguments, so the activity log reads well without the model's help.
+func labelled(t Tool, raw json.RawMessage) json.RawMessage {
+	if !t.Spec.Mutating || t.External {
+		return raw
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil || m == nil {
+		return raw
+	}
+	if d, _ := m["description"].(string); d != "" {
+		return raw
+	}
+	label := deriveLabel(t.Spec.Name, m)
+	if label == "" {
+		return raw
+	}
+	m["description"] = label
+	b, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return b
+}
+func deriveLabel(tool string, m map[string]any) string {
+	s := func(k string) string { v, _ := m[k].(string); return v }
+	short := func(v string, n int) string {
+		v = strings.Join(strings.Fields(v), " ")
+		if len(v) > n {
+			v = strings.ToValidUTF8(v[:n], "") + "…"
+		}
+		return v
+	}
+	switch tool {
+	case "exec_command":
+		return short(s("command"), 90)
+	case "write_file":
+		return "write " + s("path")
+	case "edit_file":
+		return "edit " + s("path")
+	case "write_stdin":
+		switch {
+		case m["terminate"] == true:
+			return "terminate command session"
+		case s("chars") != "":
+			return "send input to command session"
+		}
+		return "poll command session"
+	case "computer_action":
+		if a, ok := m["actions"].([]any); ok {
+			return fmt.Sprintf("%d desktop actions", len(a))
+		}
+		return s("action")
+	case "computer_app":
+		return short(s("action")+" "+s("app"), 60)
+	case "computer_clipboard":
+		return s("action") + " clipboard"
+	case "use_tool":
+		return "run " + s("name")
+	case "batch":
+		if c, ok := m["calls"].([]any); ok {
+			return fmt.Sprintf("batch of %d calls", len(c))
+		}
+	}
+	return ""
 }
 
 // WithoutOwn drops events about the command session a result already
@@ -504,7 +581,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, in Invocation) (out 
 	r.mu.Lock()
 	t, ok := r.tools[name]
 	r.mu.Unlock()
-	call = store.Call{ID: in.ID, Session: in.Session, Client: in.Client, Tool: name, Category: t.Spec.Category, Status: "running", Started: time.Now(), Arguments: r.redact(in.Arguments)}
+	call = store.Call{ID: in.ID, Session: in.Session, Client: in.Client, Tool: name, Category: t.Spec.Category, Status: "running", Started: time.Now(), Arguments: r.redact(labelled(t, in.Arguments))}
 	if err = r.store.Save(call); err != nil {
 		return out, call, fmt.Errorf("audit log unavailable: %w", err)
 	}
@@ -596,6 +673,13 @@ func (r *Registry) Invoke(ctx context.Context, name string, in Invocation) (out 
 	r.active[in.ID] = activeCall{cancel, t.Spec.Category}
 	r.lastStarted = time.Now()
 	r.mu.Unlock()
+	if r.PermissionCheck != nil {
+		if msg := r.PermissionCheck(t.Spec); msg != "" {
+			call.Status = "denied"
+			err = &ToolError{"permission_required", msg}
+			return
+		}
+	}
 	if key := t.lockKey(); key != "" {
 		lock := r.lock(key)
 		select {

@@ -19,7 +19,7 @@ type rpc struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-const mcpInstructions = "ReadyRig gives you a computer. Files: use read_file (line-numbered, paged), edit_file, write_file, list_directory, glob and search_files instead of cat, sed, grep or find in exec_command. exec_command returns exit codes as data; long output is cut to its start and end and the full text is read with read_file on the reported stdout_path. Use background=true for long jobs: while one runs, tool results in your session carry a [progress] line every 15 seconds (elapsed time, output size, time since last output), list_tasks shows every job, write_stdin with return_on=output follows the output of a job as it appears, and when it ends the next result carries a [notice] line (and a notices field); clients that open the optional GET /mcp event stream also receive these as notifications. Desktop control: take a fresh screenshot before coordinate actions and batch steps with actions[]. Tools in group advanced are not listed by tools/list: call help with compact=true to see them and run one with use_tool. Permissions are controlled from the local dashboard; exec_command executes on the host without an OS sandbox."
+const mcpInstructions = "ReadyRig gives you a computer. Use read_file, edit_file, write_file, list_directory, glob and search_files for files, not cat/sed/grep/find. exec_command returns exit codes as data; long output is cut and saved (read_file at stdout_path). For long jobs use background=true: results then carry [progress] lines and a [notice] when it ends; list_tasks lists jobs; write_stdin with a long yield_time_ms waits for completion. batch runs several tools in one request. Desktop: take a fresh screenshot before coordinate actions and chain steps with actions[]. Tools in group advanced are not listed: see help compact, run with use_tool. exec_command is not sandboxed."
 
 // rpcKey identifies an in-flight request so notifications/cancelled can find it.
 func rpcKey(sid string, id json.RawMessage) string {
@@ -165,15 +165,17 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			reply(out.MCPResult)
 			return
 		}
-		reply(map[string]any{"content": toolContent(out, call.ID, call.Error, err, notices), "isError": err != nil})
+		reply(map[string]any{"content": toolContent(out, call.Error, err, notices), "isError": err != nil})
 	default:
 		fail(-32601, "Method not found")
 	}
 }
 
 // toolContent turns a result into MCP content blocks: images first, then the
-// plain text body when the tool produced one, then the result metadata as JSON.
-func toolContent(out harness.Output, callID, callError string, err error, notices []harness.Event) []map[string]any {
+// plain-text body when the tool produced one, then notices. A JSON block follows
+// only when it carries something the text does not: the result of a tool that
+// has no text form, or the error and its code.
+func toolContent(out harness.Output, callError string, err error, notices []harness.Event) []map[string]any {
 	content := []map[string]any{}
 	for _, img := range out.Images {
 		content = append(content, map[string]any{"type": "image", "mimeType": img.MIME, "data": img.Data})
@@ -184,32 +186,32 @@ func toolContent(out harness.Output, callID, callError string, err error, notice
 			content = append(content, map[string]any{"type": "image", "mimeType": "image/jpeg", "data": strings.TrimPrefix(shot, "data:image/jpeg;base64,")})
 			delete(value, "screenshot")
 		}
-		if out.Text != "" && len(out.TextKeys) > 0 {
-			meta := make(map[string]any, len(value))
-			for k, v := range value {
-				meta[k] = v
-			}
-			for _, k := range out.TextKeys {
-				delete(meta, k)
-			}
-			result = meta
-		}
 	}
-	if out.Text != "" {
+	text := out.Text != ""
+	if text {
 		content = append(content, map[string]any{"type": "text", "text": out.Text})
 	}
 	if len(notices) > 0 {
 		content = append(content, map[string]any{"type": "text", "text": noticeText(notices)})
 	}
-	envelope := map[string]any{"call_id": callID, "result": result, "error": callError}
-	if len(notices) > 0 {
-		envelope["notices"] = NoticeValues(notices)
+	var envelope map[string]any
+	switch {
+	case err != nil:
+		envelope = map[string]any{"error": callError, "error_code": harness.ErrorCode(err)}
+		if !text && result != nil {
+			envelope["result"] = result
+		}
+	case !text:
+		envelope = map[string]any{"result": result}
 	}
-	if err != nil {
-		envelope["error_code"] = harness.ErrorCode(err)
+	if envelope != nil {
+		if len(notices) > 0 {
+			envelope["notices"] = NoticeValues(notices)
+		}
+		b, _ := json.Marshal(envelope)
+		content = append(content, map[string]any{"type": "text", "text": string(b)})
 	}
-	b, _ := json.Marshal(envelope)
-	return append(content, map[string]any{"type": "text", "text": string(b)})
+	return content
 }
 
 // noticeText renders held events as lines an agent reads before the metadata.

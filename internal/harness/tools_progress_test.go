@@ -27,7 +27,7 @@ func TestLongPollReturnsWhenOutputArrives(t *testing.T) {
 	if _, err = invoke(t, r, "write_stdin", map[string]any{"session_id": id, "return_on": "later"}); ErrorCode(err) != "invalid_arguments" {
 		t.Fatalf("bad return_on: %v", err)
 	}
-	if _, err = invoke(t, r, "write_stdin", map[string]any{"session_id": id, "yield_time_ms": 20001}); err == nil {
+	if _, err = invoke(t, r, "write_stdin", map[string]any{"session_id": id, "yield_time_ms": 55001}); err == nil {
 		t.Fatal("wait above the limit accepted")
 	}
 }
@@ -65,7 +65,7 @@ func TestRunningResultsReportProgress(t *testing.T) {
 		t.Fatalf("text: %q", out.Text)
 	}
 	finished, _ := invoke(t, r, "exec_command", map[string]any{"command": "printf done"})
-	if fv := asMap(t, finished); fv["elapsed_ms"] == nil || fv["output_bytes"] != int64(4) || fv["idle_ms"] != nil {
+	if fv := asMap(t, finished); fv["elapsed_ms"] != nil || fv["output_bytes"] != nil || fv["idle_ms"] != nil || fv["truncated"] != nil || fv["timed_out"] != nil {
 		t.Fatalf("finished fields: %v", fv)
 	}
 }

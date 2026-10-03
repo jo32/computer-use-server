@@ -92,18 +92,11 @@ func TestMCPFileReadsArePlainTextWithMetadataAfter(t *testing.T) {
 	s := fixture(t)
 	workspaceOf(t, s, "notes.txt", "alpha\nbeta\n")
 	r := newMCPClient(t, s).call("read_file", map[string]any{"path": "notes.txt"})
-	if r.IsError || len(r.Content) != 2 {
-		t.Fatalf("blocks: %+v", r.Content)
+	if r.IsError || len(r.Content) != 1 {
+		t.Fatalf("a text result is one block, with no repeated metadata: %+v", r.Content)
 	}
 	if r.Content[0]["text"] != "     1\talpha\n     2\tbeta\n" {
 		t.Fatalf("body: %q", r.Content[0]["text"])
-	}
-	result := envelope(t, r)["result"].(map[string]any)
-	if _, has := result["content"]; has {
-		t.Fatal("file body is duplicated inside the JSON metadata")
-	}
-	if result["total_lines"] != float64(2) || result["truncated"] != false {
-		t.Fatalf("metadata: %v", result)
 	}
 }
 func TestMCPImageFilesAreImageBlocks(t *testing.T) {
@@ -125,7 +118,7 @@ func TestMCPErrorsCarryACode(t *testing.T) {
 		tool string
 		args any
 		code string
-	}{"bad argument": {"read_file", map[string]any{"path": 5}, "invalid_arguments"}, "unknown tool": {"nope", map[string]any{}, "unknown_tool"}, "missing file": {"read_file", map[string]any{"path": "absent"}, "tool_error"}} {
+	}{"bad argument": {"read_file", map[string]any{"path": 5}, "invalid_arguments"}, "unknown tool": {"nope", map[string]any{}, "unknown_tool"}, "missing file": {"read_file", map[string]any{"path": "absent"}, "not_found"}} {
 		r := c.call(tc.tool, tc.args)
 		if !r.IsError || envelope(t, r)["error_code"] != tc.code {
 			t.Errorf("%s: %+v", name, r)
@@ -194,13 +187,12 @@ func TestMCPNonZeroExitIsNotAnError(t *testing.T) {
 	if r.IsError || !strings.Contains(r.Content[0]["text"].(string), "[exit code 9]") {
 		t.Fatalf("%+v", r)
 	}
-	env := envelope(t, r)
-	if env["error"] != "command exited with code 9" || env["result"].(map[string]any)["exit_code"] != float64(9) {
-		t.Fatalf("%v", env)
+	if len(r.Content) != 1 {
+		t.Fatalf("the exit code is in the text; no JSON block is needed: %+v", r.Content)
 	}
 	w := request(s.Gateway(), "POST", "/api/v1/tools/exec_command", `{"command":"exit 3"}`, s.AccessPath)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"exit_code":3`) || !strings.Contains(w.Body.String(), `"status":"error"`) {
-		t.Fatal(w.Code, w.Body.String())
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"exit_code":3`) || !strings.Contains(w.Body.String(), `"status":"success"`) || strings.Contains(w.Body.String(), `"error":"command`) {
+		t.Fatal("a non-zero exit is a result, not a failed call:", w.Code, w.Body.String())
 	}
 }
 func TestRESTErrorCodesAndStatuses(t *testing.T) {
@@ -381,11 +373,7 @@ func TestMCPNextCallReportsFinishedBackgroundJob(t *testing.T) {
 	if !strings.Contains(text, "[notice] background exec_command task_finished: error, exit code 3") {
 		t.Fatalf("no notice: %+v", next.Content)
 	}
-	notices := envelope(t, next)["notices"].([]any)
-	if len(notices) != 1 || notices[0].(map[string]any)["exit_code"] != float64(3) {
-		t.Fatalf("%v", notices)
-	}
-	if third := c.call("exec_command", map[string]any{"command": "true"}); strings.Contains(envelopeText(third), "notices") {
+	if third := c.call("exec_command", map[string]any{"command": "true"}); strings.Contains(envelopeText(third), "[notice]") {
 		t.Fatal("notice repeated")
 	}
 	w := request(s.Gateway(), "POST", "/api/v1/tools/exec_command", `{"command":"sleep 0.3; printf x","background":true}`, s.AccessPath)
@@ -417,10 +405,6 @@ func TestMCPResultsCarryProgressLinesAtMostEveryInterval(t *testing.T) {
 	first := c.call("list_directory", map[string]any{})
 	if !strings.Contains(envelopeText(first), "[progress] exec_command abc  running 40s") {
 		t.Fatalf("%+v", first.Content)
-	}
-	notices := envelope(t, first)["notices"].([]any)
-	if len(notices) != 1 || notices[0].(map[string]any)["kind"] != "task_progress" || notices[0].(map[string]any)["session_id"] != "abc" {
-		t.Fatalf("%v", notices)
 	}
 	if second := c.call("list_directory", map[string]any{}); strings.Contains(envelopeText(second), "[progress]") {
 		t.Fatal("progress repeated inside the interval")

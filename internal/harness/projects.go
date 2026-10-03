@@ -350,9 +350,9 @@ func (p *Projects) pick(session, ref string, pin bool) (Project, error) {
 		case 1:
 			return byName[0], nil
 		case 0:
-			return Project{}, fmt.Errorf("project %q not found; known projects: %s", ref, p.names())
+			return Project{}, &ToolError{"project_not_found", fmt.Sprintf("project %q not found; known projects: %s", ref, p.names())}
 		}
-		return Project{}, fmt.Errorf("project name %q is ambiguous; use its ID from list_projects", ref)
+		return Project{}, &ToolError{"ambiguous_project", fmt.Sprintf("project name %q is ambiguous; use its ID from list_projects", ref)}
 	}
 	pinnable := session != "" && session != "default"
 	p.pinMu.Lock()
@@ -418,6 +418,13 @@ func (p *Projects) SessionDefault(session string) (Project, bool) {
 	return Project{}, false
 }
 
+// Count is the number of approved projects.
+func (p *Projects) Count() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.state.Projects)
+}
+
 // ProjectFor finds the approved project that contains an absolute path.
 func (p *Projects) ProjectFor(abs string) (Project, bool) {
 	p.mu.RLock()
@@ -434,7 +441,8 @@ func (p *Projects) ProjectFor(abs string) (Project, bool) {
 // tagProject names the project a result belongs to, found from the absolute
 // path in key, so the agent can see what its relative path resolved to.
 func tagProject(p *Projects, out Output, key string) {
-	if p == nil {
+	// With a single project there is nothing to disambiguate.
+	if p == nil || p.Count() < 2 {
 		return
 	}
 	if m, ok := out.Value.(map[string]any); ok {
@@ -453,7 +461,7 @@ type projectList struct {
 }
 
 func (p *Projects) Register(r *Registry) {
-	r.Register(Tool{Spec: Spec{Name: "list_projects", Category: "system", Description: "List approved projects (id, name, absolute path), the active project that the dashboard marks as the default, session_default (the project your relative paths mean), and the Full Access status. A session's default is fixed the first time it uses a relative path, so changing the default in the dashboard affects only new sessions. Name a project by id or name in the project argument of file tools and exec_command, or just use absolute paths inside a project (no project argument needed). This tool cannot grant access or change projects.", Parallel: true, InputSchema: Schema(map[string]any{})}, AvailableWhenPaused: true, Run: func(ctx context.Context, in Invocation) (Output, error) {
+	r.Register(Tool{Spec: Spec{Name: "list_projects", Category: "system", Description: "List approved projects (id, name, path), the active default, session_default (what your relative paths mean; fixed when the session first uses one) and full_access. Absolute paths need no project argument.", Parallel: true, InputSchema: Schema(map[string]any{})}, AvailableWhenPaused: true, Run: func(ctx context.Context, in Invocation) (Output, error) {
 		var a struct{}
 		if err := Decode(in.Arguments, &a); err != nil {
 			return Output{}, err

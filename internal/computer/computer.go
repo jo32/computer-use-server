@@ -131,6 +131,28 @@ func New(dir string) *Computer {
 	return &Computer{driver: nativeDriver{}, dir: dir, frames: map[string]frame{}, trees: map[string]treeState{}}
 }
 func (c *Computer) Permissions() Permissions { return c.driver.Permissions() }
+
+// Missing names the macOS permission a tool needs and does not have yet, or
+// returns "" when it can run. Screen Recording is checked when the tool takes
+// the screenshot itself; actions only need Accessibility because they can be
+// asked not to capture.
+func (c *Computer) Missing(tool string) string {
+	perms := c.driver.Permissions()
+	if !perms.Supported {
+		return ""
+	}
+	switch tool {
+	case "computer_screenshot":
+		if !perms.Screen {
+			return "ReadyRig needs the Screen & System Audio Recording permission: turn on ReadyRig in System Settings > Privacy & Security > Screen & System Audio Recording, then restart ReadyRig."
+		}
+	case "computer_action", "computer_ui_tree":
+		if !perms.Accessibility {
+			return "ReadyRig needs the Accessibility permission: turn on ReadyRig in System Settings > Privacy & Security > Accessibility, then restart ReadyRig."
+		}
+	}
+	return ""
+}
 func (c *Computer) settleInterval() time.Duration {
 	if c.interval > 0 {
 		return c.interval
@@ -146,28 +168,28 @@ var actionNames = []string{"mouse_move", "left_click", "right_click", "middle_cl
 func stepProps() map[string]any {
 	return map[string]any{
 		"action":       map[string]any{"type": "string", "description": "What to do", "enum": actionNames},
-		"coordinate":   pair("[x,y] in the pixels of the screenshot named by frame_id"),
-		"to":           pair("Drag destination [x,y] in screenshot pixels"),
-		"element":      harness.Prop("string", "Element ref (e12) from computer_ui_tree to target instead of a coordinate"),
-		"text":         harness.Prop("string", "Text for type (typed as keystrokes) or paste (through the clipboard, best for long or non-ASCII text)"),
-		"keys":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "maxItems": 5, "description": "One chord: any modifiers (cmd, ctrl, alt, shift) plus exactly one key, e.g. [\"cmd\",\"shift\",\"4\"], [\"enter\"], [\"escape\"]"},
-		"scroll_delta": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "minItems": 2, "maxItems": 2, "description": "[horizontal,vertical] wheel pixels; scrolls where the pointer is, or at coordinate/element if given"},
-		"modifiers":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Keys held during a click, drag or scroll: cmd, ctrl, alt, shift"},
-		"duration_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 10000, "description": "Pause length for wait"},
-		"frame_id":     harness.Prop("string", "Screenshot frame ID the coordinates refer to"),
+		"coordinate":   pair("[x,y] pixels in the frame_id screenshot"),
+		"to":           pair("Drag end [x,y]"),
+		"element":      harness.Prop("string", "Ref (e12) from computer_ui_tree, instead of a coordinate"),
+		"text":         harness.Prop("string", "Text to type, or to paste via the clipboard (best for long or non-ASCII text)"),
+		"keys":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "maxItems": 5, "description": "One chord: modifiers plus one key, e.g. [\"cmd\",\"c\"], [\"enter\"]"},
+		"scroll_delta": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "minItems": 2, "maxItems": 2, "description": "[horizontal,vertical] wheel pixels, at coordinate/element if given"},
+		"modifiers":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Held during click/drag/scroll: cmd, ctrl, alt, shift"},
+		"duration_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 10000, "description": "Pause for wait"},
+		"frame_id":     harness.Prop("string", "Screenshot the coordinates refer to"),
 	}
 }
 func (c *Computer) Register(r *harness.Registry) {
-	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_screenshot", Category: "computer", Description: "Capture a display as a JPEG scaled to at most 1280 pixels. Returns a frame_id; coordinates in this image are what computer_action expects. To read small text or aim precisely, pass region=[x1,y1,x2,y2] (pixels of an earlier frame_id) to get that area at full resolution as a new frame. display selects a monitor (1 is the main one). Requires macOS Screen Recording permission.", InputSchema: harness.Schema(map[string]any{"display": map[string]any{"type": "integer", "minimum": 1, "maximum": 16, "description": "Monitor number, default 1 (main)"}, "region": map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "minItems": 4, "maxItems": 4, "description": "[x1,y1,x2,y2] area to zoom into, in pixels of frame_id"}, "frame_id": harness.Prop("string", "Earlier screenshot that region refers to")})}, Run: c.screenshot})
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_screenshot", Category: "computer", Description: "Capture a display as a JPEG (max 1280 px) and return a frame_id; coordinates in the image are what computer_action expects. region=[x1,y1,x2,y2] with an earlier frame_id zooms in at full resolution. display picks a monitor. Needs Screen Recording permission.", InputSchema: harness.Schema(map[string]any{"display": map[string]any{"type": "integer", "minimum": 1, "maximum": 16, "description": "Monitor number, default 1 (main)"}, "region": map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "minItems": 4, "maxItems": 4, "description": "[x1,y1,x2,y2] area of frame_id to zoom into"}, "frame_id": harness.Prop("string", "Screenshot that region refers to")})}, Run: c.screenshot})
 	step := stepProps()
-	props := map[string]any{"actions": map[string]any{"type": "array", "items": map[string]any{"type": "object"}, "minItems": 1, "maxItems": maxBatch, "description": "Several steps run in order in one call (same fields as a single action); only one screenshot is taken at the end. Use it to chain click, type, key without a round trip each."}, "capture_after": harness.Prop("boolean", "Return a screenshot after the action(s), default true"), "settle_ms": map[string]any{"type": "integer", "minimum": 0, "maximum": 5000, "description": "Longest wait for the screen to stop changing before that screenshot, default 1000; 0 captures after a fixed 200 ms"}}
+	props := map[string]any{"actions": map[string]any{"type": "array", "items": map[string]any{"type": "object"}, "minItems": 1, "maxItems": maxBatch, "description": "Steps run in order in one call (same fields); one screenshot at the end"}, "capture_after": harness.Prop("boolean", "Screenshot afterwards (default true)"), "settle_ms": map[string]any{"type": "integer", "minimum": 0, "maximum": 5000, "description": "Max wait for the screen to settle (default 1000; 0 = fixed 200 ms)"}}
 	for k, v := range step {
 		props[k] = v
 	}
-	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_action", Category: "computer", Mutating: true, Description: "Act on the screen: mouse_move, left_click, right_click, middle_click, double_click, triple_click, drag, scroll, type, paste, key, wait. Pass one action, or actions[] to chain steps in a single call. Coordinates are pixels of a screenshot (frame_id, from this session within 5 minutes) or element refs from computer_ui_tree, which are more reliable than pixels. Coordinates in a zoomed region screenshot work too. Holds modifiers during clicks and scrolls. Returns a screenshot taken once the screen has settled. Moving the pointer into a display corner stops input.", InputSchema: harness.Schema(props)}, Run: c.action})
-	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_ui_tree", Category: "computer", Description: "List the accessibility elements (buttons, fields, menus, text) of an application with refs such as e12. Pass a ref as element to computer_action to click it without guessing pixels. Defaults to the frontmost app; app matches a window owner name. Requires macOS Accessibility permission. Refs are valid for 5 minutes in this session; list again after the UI changes.", InputSchema: harness.Schema(map[string]any{"app": harness.Prop("string", "Application name (substring), default frontmost"), "max_nodes": map[string]any{"type": "integer", "minimum": 1, "maximum": 800, "description": "Element limit, default 250"}, "depth": map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Nesting limit, default 10"}})}, Run: c.uiTree})
-	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_app", Category: "computer", Mutating: true, Description: "windows lists visible windows (app, title, position, size, frontmost). open and focus launch an application or bring it to the front by name, e.g. Safari or \"Visual Studio Code\".", InputSchema: harness.Schema(map[string]any{"action": map[string]any{"type": "string", "enum": []string{"windows", "open", "focus"}, "description": "What to do"}, "app": harness.Prop("string", "Application name for open and focus")}, "action")}, Run: c.app})
-	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_clipboard", Category: "computer", Mutating: true, Description: "Read (get) or replace (set) the clipboard text. To insert long or non-ASCII text into the focused field, computer_action paste is usually simpler. Clipboard contents are recorded in the activity log.", InputSchema: harness.Schema(map[string]any{"action": map[string]any{"type": "string", "enum": []string{"get", "set"}, "description": "get or set"}, "text": harness.Prop("string", "Text to place on the clipboard (set)")}, "action")}, Run: c.clipboard})
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_action", Category: "computer", Mutating: true, Description: "Act on the screen: mouse_move, left/right/middle/double/triple_click, drag, scroll, type, paste, key, wait. One action, or actions[] (max 25) in one call with one screenshot at the end. Target by coordinate (pixels of a frame_id from this session, under 5 minutes old) or by element ref from computer_ui_tree (more reliable). modifiers are held during clicks and scrolls. The returned screenshot waits for the screen to settle. A pointer in a display corner stops input.", InputSchema: harness.Schema(props)}, Run: c.action})
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_ui_tree", Category: "computer", Description: "List the accessibility elements (buttons, fields, menus, text) of an app with refs like e12 that computer_action takes as element. app defaults to the frontmost. Refs last 5 minutes in this session. Needs Accessibility permission.", InputSchema: harness.Schema(map[string]any{"app": harness.Prop("string", "Application name (substring), default frontmost"), "max_nodes": map[string]any{"type": "integer", "minimum": 1, "maximum": 800, "description": "Element limit, default 250"}, "depth": map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "description": "Nesting limit, default 10"}})}, Run: c.uiTree})
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_app", Category: "computer", Mutating: true, Description: "windows lists visible windows; open or focus launches an app or brings it to the front by name.", InputSchema: harness.Schema(map[string]any{"action": map[string]any{"type": "string", "enum": []string{"windows", "open", "focus"}, "description": "What to do"}, "app": harness.Prop("string", "Application name for open and focus")}, "action")}, Run: c.app})
+	r.Register(harness.Tool{Spec: harness.Spec{Name: "computer_clipboard", Category: "computer", Mutating: true, Description: "get or set the clipboard text (recorded in the activity log). To insert text, computer_action paste is simpler.", InputSchema: harness.Schema(map[string]any{"action": map[string]any{"type": "string", "enum": []string{"get", "set"}, "description": "get or set"}, "text": harness.Prop("string", "Text to place on the clipboard (set)")}, "action")}, Run: c.clipboard})
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

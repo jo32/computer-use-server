@@ -20,7 +20,7 @@ func TestHelpLiveDefinitionsAndDisabledTools(t *testing.T) {
 	r.RegisterHelp()
 	r.Register(Tool{Spec: Spec{Name: "terminal_test", Category: "terminal", InputSchema: Schema(map[string]any{"cmd": Prop("string", "command")}, "cmd")}})
 	got := helpResult(t, r, map[string]any{})
-	if got.Total != 2 || got.Tools[0].Name != "help" || !got.Tools[0].Available || got.Tools[1].Name != "use_tool" {
+	if got.Total != 3 || got.Tools[0].Name != "help" || !got.Tools[0].Available || got.Tools[1].Name != "batch" || got.Tools[2].Name != "use_tool" {
 		t.Fatal(got)
 	}
 	got = helpResult(t, r, map[string]any{"name": "terminal_test"})
@@ -30,11 +30,11 @@ func TestHelpLiveDefinitionsAndDisabledTools(t *testing.T) {
 	if got.Tools[0].InputSchema["required"].([]string)[0] != "cmd" {
 		t.Fatal("schema missing")
 	}
-	if got = helpResult(t, r, map[string]any{"include_disabled": true}); got.Total != 3 {
+	if got = helpResult(t, r, map[string]any{"include_disabled": true}); got.Total != 4 {
 		t.Fatal(got)
 	}
 	r.Enable("terminal", true)
-	if got = helpResult(t, r, map[string]any{}); got.Total != 3 || !got.Tools[2].Available {
+	if got = helpResult(t, r, map[string]any{}); got.Total != 4 || !got.Tools[3].Available {
 		t.Fatal(got)
 	}
 	// External schemas use decoded JSON types and may contain arbitrary nested constraints.
@@ -63,7 +63,7 @@ func TestHelpWhilePausedAndAudit(t *testing.T) {
 		t.Fatal(got)
 	}
 	got = helpResult(t, r, map[string]any{"include_disabled": true})
-	if got.Total != 3 || !got.Tools[2].Enabled || got.Tools[2].Available || got.Tools[2].UnavailableReason != "control_paused" {
+	if got.Total != 4 || !got.Tools[3].Enabled || got.Tools[3].Available || got.Tools[3].UnavailableReason != "control_paused" {
 		t.Fatal(got)
 	}
 	if _, err := invoke(t, r, "file_test", map[string]any{}); err == nil {
@@ -95,11 +95,11 @@ func TestHelpCompactAndAdvancedGroup(t *testing.T) {
 		called = true
 		return Output{Value: map[string]any{"ok": true}}, nil
 	}})
-	if specs := r.ListedSpecs(); len(specs) != 2 {
+	if specs := r.ListedSpecs(); len(specs) != 3 {
 		t.Fatalf("advanced tool advertised: %d", len(specs))
 	}
 	got := helpResult(t, r, map[string]any{"compact": true})
-	if got.Total != 3 || !strings.Contains(got.Note, "use_tool") {
+	if got.Total != 4 || !strings.Contains(got.Note, "use_tool") {
 		t.Fatal(got)
 	}
 	for _, h := range got.Tools {
@@ -107,7 +107,7 @@ func TestHelpCompactAndAdvancedGroup(t *testing.T) {
 			t.Fatal("compact listing carries schemas")
 		}
 	}
-	if got.Tools[2].Description != "Does deep work." {
+	if got.Tools[3].Description != "Does deep work." {
 		t.Fatal(got.Tools[2].Description)
 	}
 	b, _ := json.Marshal(got)
@@ -132,7 +132,7 @@ func TestHelpCompactAndAdvancedGroup(t *testing.T) {
 		t.Fatal("use_tool recursed")
 	}
 	r.ExposeAll = true
-	if specs := r.ListedSpecs(); len(specs) != 3 {
+	if specs := r.ListedSpecs(); len(specs) != 4 {
 		t.Fatal("ExposeAll ignored")
 	}
 }

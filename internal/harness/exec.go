@@ -31,7 +31,7 @@ const (
 	spillLifetime = 24 * time.Hour
 	maxTimeout    = 4 * 60 * 60
 	// maxPollWait bounds a write_stdin wait; keep it under the shortest HTTP timeout on the path.
-	maxPollWait = 20000
+	maxPollWait = 55000
 )
 
 // streamBuf collects one output stream of a process.
@@ -244,10 +244,10 @@ func (p *Processes) Stop() {
 	p.mu.Unlock()
 }
 func (p *Processes) Register(r *Registry) {
-	r.Register(Tool{Spec: Spec{Name: "exec_command", Category: "terminal", Description: "Run a shell command on the host (NOT an OS sandbox). cwd is project-relative or a permitted absolute path. A non-zero exit code is returned as data (exit_code), not as a tool error. Output is returned as text, cut to the start and end when longer than 30 KiB; the full output is then saved and its path reported as stdout_path/stderr_path for read_file. If the command is still running after yield_time_ms the result has a session_id: poll or answer it with write_stdin. Set background=true for long jobs (servers, builds, test runs): it returns at once and a task_finished notification is sent when the job ends. login_shell=true loads your shell profile first (needed for Homebrew, nvm, pyenv tools that are not on the default PATH). There is no PTY. For file work prefer read_file, edit_file, write_file, search_files and glob over cat, sed, grep and find.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"command": Prop("string", "Shell command"), "project": projectProp, "cwd": Prop("string", "Project-relative or permitted absolute directory"), "timeout": limited("integer", "Seconds before the command is killed; default 60 (1800 with background), max 14400", 1, maxTimeout), "yield_time_ms": limited("integer", "How long to wait for output before returning a session_id, default 1000", 0, 10000), "background": Prop("boolean", "Return immediately and notify when the command finishes"), "login_shell": Prop("boolean", "Run through the user's login shell so profile PATH entries apply"), "env": Prop("object", "Additional environment variables")}, "command")}, Run: p.tagged(p.start)})
-	r.Register(Tool{Spec: Spec{Name: "list_tasks", Category: "terminal", Description: "List the command sessions this session started, running and recently finished: session_id, command, elapsed time, bytes of output, how long since the last output, exit code, and saved-output paths. A quick way to see whether a background job is progressing, stuck, or done.", Parallel: true, InputSchema: Schema(map[string]any{})}, Run: p.listTasks})
+	r.Register(Tool{Spec: Spec{Name: "exec_command", Category: "terminal", Description: "Run a shell command on the host (not sandboxed). A non-zero exit is data (exit_code), not an error. Output over 30 KiB is cut to its start and end and saved in full; read it with read_file at stdout_path. If still running after yield_time_ms you get a session_id for write_stdin. background=true returns at once for long jobs: later results carry [progress] lines and a [notice] when it ends. login_shell=true loads your shell profile (Homebrew, nvm). No PTY. Prefer the file tools over cat/sed/grep/find.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"command": Prop("string", "Shell command"), "project": projectProp, "cwd": Prop("string", "Project-relative or permitted absolute directory"), "timeout": limited("integer", "Seconds before the command is killed; default 600 (3600 with background), max 14400", 1, maxTimeout), "yield_time_ms": limited("integer", "How long to wait for output before returning a session_id, default 1000", 0, 10000), "background": Prop("boolean", "Return immediately and notify when the command finishes"), "login_shell": Prop("boolean", "Run through the user's login shell so profile PATH entries apply"), "env": Prop("object", "Additional environment variables")}, "command")}, Run: p.tagged(p.start)})
+	r.Register(Tool{Spec: Spec{Name: "list_tasks", Category: "terminal", Description: "List this session's command sessions (running and recent): id, command, elapsed time, output size, idle time, exit code. wait=any|all blocks up to yield_time_ms until a running one (any) or all of them finish.", Parallel: true, InputSchema: Schema(map[string]any{"wait": enum("Block until one (any) or all running commands finish", "any", "all"), "yield_time_ms": limited("integer", "Longest wait, default 10000", 0, maxPollWait)})}, Run: p.listTasks})
 	r.AddProgress(p.progress)
-	r.Register(Tool{Spec: Spec{Name: "write_stdin", Category: "terminal", Description: "Write to or poll a running exec_command session. An empty chars value polls and returns only output not yet read; a running result reports elapsed_ms, output_bytes and idle_ms so you can tell progress from a hang. Use return_on=output with a long yield_time_ms to follow a job without busy polling. terminate=true kills the process group and returns a normal result with terminated:true (not an error); close_stdin=true sends EOF.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"session_id": Prop("string", "Process session_id from exec_command"), "chars": Prop("string", "Input bytes"), "yield_time_ms": limited("integer", "Longest wait for output, default 1000, max 20000", 0, maxPollWait), "return_on": enum("timeout (default) waits the full time unless the process exits; output returns as soon as new output arrives, a long poll for following logs", "timeout", "output"), "terminate": Prop("boolean", "Cancel process"), "close_stdin": Prop("boolean", "Close stdin")}, "session_id")}, Run: p.tagged(p.input)})
+	r.Register(Tool{Spec: Spec{Name: "write_stdin", Category: "terminal", Description: "Send input to, or poll, an exec_command session. An empty chars polls and returns unread output. yield_time_ms (max 55000) is the longest wait and the call returns early if the process exits, so use a long value to wait for completion (25000 works everywhere). return_on=output also returns when new output arrives. terminate=true kills the process (a normal result with terminated:true); close_stdin sends EOF.", Mutating: true, Parallel: true, InputSchema: Schema(map[string]any{"session_id": Prop("string", "Process session_id from exec_command"), "chars": Prop("string", "Input bytes"), "yield_time_ms": limited("integer", "Longest wait for output, default 1000, max 20000", 0, maxPollWait), "return_on": enum("timeout (default) waits the full time unless the process exits; output returns as soon as new output arrives, a long poll for following logs", "timeout", "output"), "terminate": Prop("boolean", "Cancel process"), "close_stdin": Prop("boolean", "Close stdin")}, "session_id")}, Run: p.tagged(p.input)})
 }
 
 // commandEnv keeps secrets out of children but gives them a usable PATH: apps
@@ -329,9 +329,9 @@ func (p *Processes) start(ctx context.Context, in Invocation) (Output, error) {
 		return Output{}, errors.New("command is empty")
 	}
 	if a.Timeout == 0 {
-		a.Timeout = 60
+		a.Timeout = 600
 		if a.Background {
-			a.Timeout = 1800
+			a.Timeout = 3600
 		}
 	}
 	if a.Timeout < 1 || a.Timeout > maxTimeout || a.Yield < 0 || a.Yield > 10000 {
@@ -371,14 +371,28 @@ func (p *Processes) start(ctx context.Context, in Invocation) (Output, error) {
 	for id, pr := range p.items {
 		select {
 		case <-pr.done:
-			if time.Since(pr.ended) > 10*time.Minute {
+			if time.Since(pr.ended) > time.Hour {
 				delete(p.items, id)
 			}
 		default:
 		}
 	}
 	if len(p.items) >= 128 {
-		return Output{}, errors.New("process capacity reached; wait for old sessions to expire")
+		// Make room by forgetting the finished session that ended longest ago.
+		oldest, oldestEnd := "", time.Time{}
+		for id, pr := range p.items {
+			select {
+			case <-pr.done:
+				if oldest == "" || pr.ended.Before(oldestEnd) {
+					oldest, oldestEnd = id, pr.ended
+				}
+			default:
+			}
+		}
+		if oldest == "" {
+			return Output{}, &ToolError{"too_many_sessions", "128 commands are running; wait for one to finish or terminate one"}
+		}
+		delete(p.items, oldest)
 	}
 	if err := ctx.Err(); err != nil {
 		return Output{}, err
@@ -572,13 +586,20 @@ func poll(ctx context.Context, pr *process, id string, yield int, onOutput bool)
 	case <-pr.activity:
 	default:
 	}
-	value := map[string]any{"cwd": pr.cwd, "stdout": stdout, "stderr": stderr, "truncated": a || b, "session_id": id, "running": !finished}
+	value := map[string]any{"cwd": pr.cwd, "stdout": stdout, "stderr": stderr, "session_id": id, "running": !finished}
+	if a || b {
+		value["truncated"] = true
+	}
 	addPaths(value, pr)
-	addProgress(value, pr, finished)
+	if !finished {
+		addProgress(value, pr, false)
+	}
 	out := Output{Value: value, TextKeys: []string{"stdout", "stderr"}}
 	var err error
 	if finished {
-		value["timed_out"] = pr.timedOut
+		if pr.timedOut {
+			value["timed_out"] = true
+		}
 		if pr.terminated.Load() {
 			value["terminated"] = true
 		} else {
@@ -800,10 +821,65 @@ func (p *Processes) progress(session string) []Event {
 	}
 	return out
 }
+
+// waitTasks blocks until one (any) or all of the session's running commands
+// have finished, or until the wait ends.
+func (p *Processes) waitTasks(ctx context.Context, session, mode string, waitMs int) error {
+	p.mu.Lock()
+	var running []*process
+	for _, pr := range p.items {
+		if pr.session == session {
+			select {
+			case <-pr.done:
+			default:
+				running = append(running, pr)
+			}
+		}
+	}
+	p.mu.Unlock()
+	if len(running) == 0 {
+		return nil
+	}
+	if waitMs == 0 {
+		waitMs = 10000
+	}
+	deadline := time.NewTimer(time.Duration(waitMs) * time.Millisecond)
+	defer deadline.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		finished := 0
+		for _, pr := range running {
+			select {
+			case <-pr.done:
+				finished++
+			default:
+			}
+		}
+		if mode == "any" && finished > 0 || finished == len(running) {
+			return nil
+		}
+		select {
+		case <-tick.C:
+		case <-deadline.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
 func (p *Processes) listTasks(ctx context.Context, in Invocation) (Output, error) {
-	var a struct{}
+	var a struct {
+		Wait  string
+		Yield int `json:"yield_time_ms"`
+	}
 	if err := Decode(in.Arguments, &a); err != nil {
 		return Output{}, err
+	}
+	if a.Wait != "" {
+		if err := p.waitTasks(ctx, in.Session, a.Wait, a.Yield); err != nil {
+			return Output{}, err
+		}
 	}
 	tasks := p.tasks(in.Session)
 	var text strings.Builder

@@ -130,6 +130,10 @@ func (s *Server) invoke(w http.ResponseWriter, r *http.Request) {
 	if len(out.Images) > 0 {
 		body["images"] = out.Images
 	}
+	if err == nil && out.Failure != "" {
+		// A command that exited non-zero is a result the agent reads, not a failed call.
+		body["status"], body["error"] = "success", ""
+	}
 	sid := harness.SessionOrDefault(session)
 	if notices := harness.WithoutOwn(append(s.Registry.TakeNotices(sid), s.Registry.ProgressFor(sid, r.PathValue("name"))...), out.Value); len(notices) > 0 {
 		body["notices"] = NoticeValues(notices)

@@ -90,19 +90,19 @@ func limited(kind, description string, min, max int) map[string]any {
 	return map[string]any{"type": kind, "description": description, "minimum": min, "maximum": max}
 }
 
-var projectProp = Prop("string", "Project id or name from list_projects. Usually omit it: an absolute path inside an approved project finds its project, and a relative path uses your session default (see list_projects session_default).")
+var projectProp = Prop("string", "Project id or name (rarely needed)")
 
 func (f *Files) Register(r *Registry) {
-	r.Register(Tool{Spec: Spec{Name: "read_file", Category: "files", Description: "Read a text file with line numbers (cat -n style). Returns up to 2000 lines or 128 KiB per call; if the file is longer the result names the start_line that continues it, so page with start_line/end_line or limit. Images (png, jpg, gif, webp) come back as images. Use encoding=base64 only for other binary data (max 1 MiB). Prefer this to cat/head/tail in exec_command. Paths are project-relative or absolute inside an approved project; the full output of a long command is read with the spill:<name> path that exec_command reports as output_path.", Parallel: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "File path, or spill:<name> for saved command output"), "start_line": limited("integer", "First line to return, 1-based (default 1)", 0, 1<<31-1), "end_line": limited("integer", "Last line to return, inclusive", 0, 1<<31-1), "limit": limited("integer", "Maximum number of lines to return (default 2000)", 0, 1<<31-1), "encoding": enum("utf8 (default) or base64", "utf8", "base64")}, "path")}, Run: f.tagged(f.read)})
-	r.Register(Tool{Spec: Spec{Name: "write_file", Category: "files", Description: "Create a file or replace it completely (atomic; creates parent directories; keeps an existing file's permissions). To change part of an existing file use edit_file instead of resending the whole content. Set create_only=true to fail rather than overwrite. Max 1 MiB.", Mutating: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "File path"), "content": Prop("string", "Text or base64 content"), "encoding": enum("utf8 (default) or base64", "utf8", "base64"), "create_only": Prop("boolean", "Fail if the file already exists")}, "path", "content")}, Run: f.tagged(f.write)})
-	r.Register(Tool{Spec: Spec{Name: "edit_file", Category: "files", Description: "Replace text in an existing file. old_string must match exactly once, so include enough surrounding lines to make it unique, unless replace_all=true replaces every occurrence. Use this instead of rewriting a file with write_file or editing with sed in exec_command. Returns the first changed line number and a numbered snippet.", Mutating: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "File path"), "old_string": Prop("string", "Exact text to find (non-empty)"), "new_string": Prop("string", "Replacement text; may be empty to delete"), "replace_all": Prop("boolean", "Replace every occurrence instead of requiring a unique match")}, "path", "old_string", "new_string")}, Run: f.tagged(f.edit)})
-	r.Register(Tool{Spec: Spec{Name: "list_directory", Category: "files", Description: "List a directory (name order, directories included). depth>1 recurses (max 8) and then skips .gitignore'd paths, .git and node_modules unless no_ignore=true. pattern filters entries with a glob such as '*.go', 'src/**/*.ts' or '*.{md,txt}'; type limits to file or dir; sort by name, modified (newest first) or size (largest first). Returns at most limit entries (default 1000).", Parallel: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "Directory, default ."), "depth": limited("integer", "Levels to list, default 1", 1, 8), "pattern": Prop("string", "Glob filter; without a slash it matches names at any depth"), "type": enum("Only files or only directories", "file", "dir"), "sort": enum("Order of results, default name", "name", "modified", "size"), "limit": limited("integer", "Maximum entries, default 1000", 1, 5000), "no_ignore": Prop("boolean", "Do not skip ignored paths when recursing")})}, Run: f.tagged(f.list)})
-	r.Register(Tool{Spec: Spec{Name: "glob", Category: "files", Description: "Find files by glob pattern relative to path, e.g. '**/*.go', 'src/**/test_*.py' or '*.{md,txt}' (a pattern without a slash matches only that directory level; use **/ to search below). Respects .gitignore, .git and node_modules unless no_ignore=true. Prefer this to find in exec_command.", Parallel: true, InputSchema: Schema(map[string]any{"project": projectProp, "pattern": Prop("string", "Glob pattern"), "path": Prop("string", "Directory to search, default ."), "type": enum("file (default), dir or any", "file", "dir", "any"), "sort": enum("Order of results, default name", "name", "modified", "size"), "limit": limited("integer", "Maximum paths, default 500", 1, 5000), "no_ignore": Prop("boolean", "Do not skip ignored paths")}, "pattern")}, Run: f.tagged(f.glob)})
-	r.Register(Tool{Spec: Spec{Name: "search_files", Category: "files", Description: "Search file contents like grep -rn. The query is literal text unless regex=true (RE2 syntax). include limits files by glob (e.g. '*.go'); context adds lines around each match; case_insensitive; output=files lists only the matching paths. Respects .gitignore and skips .git, node_modules, binary and >1 MiB files. Returns up to max_results matches (default 200); when truncated, pass next_offset as offset to continue. Prefer this to grep/rg in exec_command.", Parallel: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "File or directory, default ."), "query": Prop("string", "Text or regular expression to find"), "regex": Prop("boolean", "Treat query as a regular expression"), "case_insensitive": Prop("boolean", "Ignore letter case"), "include": Prop("string", "Glob of files to search"), "context": limited("integer", "Lines of context before and after each match (0-5)", 0, 5), "max_results": limited("integer", "Maximum matches, default 200", 1, 1000), "offset": limited("integer", "Matches to skip, from a previous next_offset", 0, 1<<31-1), "output": enum("lines (default) or files", "lines", "files"), "no_ignore": Prop("boolean", "Search ignored paths too")}, "query")}, Run: f.tagged(f.search)})
+	r.Register(Tool{Spec: Spec{Name: "read_file", Category: "files", Description: "Read a text file as numbered lines (cat -n style). Up to 2000 lines or 128 KiB per call; a longer file reports the start_line that continues it, so page with start_line/end_line/limit. Images come back as images; use encoding=base64 only for other binary data. Paths are project-relative or absolute inside a project; spill:<name> reads saved command output.", Parallel: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "File path, or spill:<name> for saved command output"), "start_line": limited("integer", "First line to return, 1-based (default 1)", 0, 1<<31-1), "end_line": limited("integer", "Last line to return, inclusive", 0, 1<<31-1), "limit": limited("integer", "Maximum number of lines to return (default 2000)", 0, 1<<31-1), "encoding": enum("utf8 (default) or base64", "utf8", "base64")}, "path")}, Run: f.tagged(f.read)})
+	r.Register(Tool{Spec: Spec{Name: "write_file", Category: "files", Description: "Create or replace a file (atomic, creates parent directories, keeps permissions). For partial changes use edit_file. create_only=true refuses to overwrite. Max 1 MiB.", Mutating: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "File path"), "content": Prop("string", "Text or base64 content"), "encoding": enum("utf8 (default) or base64", "utf8", "base64"), "create_only": Prop("boolean", "Fail if the file already exists")}, "path", "content")}, Run: f.tagged(f.write)})
+	r.Register(Tool{Spec: Spec{Name: "edit_file", Category: "files", Description: "Replace old_string with new_string in an existing file. old_string must match exactly once (add surrounding lines to make it unique) unless replace_all=true. Returns the first changed line and a snippet.", Mutating: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "File path"), "old_string": Prop("string", "Exact text to find (non-empty)"), "new_string": Prop("string", "Replacement text; may be empty to delete"), "replace_all": Prop("boolean", "Replace every occurrence instead of requiring a unique match")}, "path", "old_string", "new_string")}, Run: f.tagged(f.edit)})
+	r.Register(Tool{Spec: Spec{Name: "list_directory", Category: "files", Description: "List a directory in name order. depth>1 recurses (max 8) and then skips .gitignore'd paths, .git and node_modules unless no_ignore. pattern is a glob ('*.go', 'src/**/*.ts'); type=file|dir; sort=name|modified|size; limit defaults to 1000.", Parallel: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "Directory, default ."), "depth": limited("integer", "Levels to list, default 1", 1, 8), "pattern": Prop("string", "Glob filter; without a slash it matches names at any depth"), "type": enum("Only files or only directories", "file", "dir"), "sort": enum("Order of results, default name", "name", "modified", "size"), "limit": limited("integer", "Maximum entries, default 1000", 1, 5000), "no_ignore": Prop("boolean", "Do not skip ignored paths when recursing")})}, Run: f.tagged(f.list)})
+	r.Register(Tool{Spec: Spec{Name: "glob", Category: "files", Description: "Find files by glob relative to path ('**/*.go', 'src/**/test_*.py', '*.{md,txt}'). A pattern without a slash matches one level only. Skips ignored paths unless no_ignore.", Parallel: true, InputSchema: Schema(map[string]any{"project": projectProp, "pattern": Prop("string", "Glob pattern"), "path": Prop("string", "Directory to search, default ."), "type": enum("file (default), dir or any", "file", "dir", "any"), "sort": enum("Order of results, default name", "name", "modified", "size"), "limit": limited("integer", "Maximum paths, default 500", 1, 5000), "no_ignore": Prop("boolean", "Do not skip ignored paths")}, "pattern")}, Run: f.tagged(f.glob)})
+	r.Register(Tool{Spec: Spec{Name: "search_files", Category: "files", Description: "Search file contents (grep -rn). Literal unless regex=true (RE2). include is a file glob; context adds lines around matches; case_insensitive; output=files lists paths only. Skips ignored, binary and >1 MiB files. Returns at most max_results (default 200); when truncated pass next_offset as offset.", Parallel: true, InputSchema: Schema(map[string]any{"project": projectProp, "path": Prop("string", "File or directory, default ."), "query": Prop("string", "Text or regular expression to find"), "regex": Prop("boolean", "Treat query as a regular expression"), "case_insensitive": Prop("boolean", "Ignore letter case"), "include": Prop("string", "Glob of files to search"), "context": limited("integer", "Lines of context before and after each match (0-5)", 0, 5), "max_results": limited("integer", "Maximum matches, default 200", 1, 1000), "offset": limited("integer", "Matches to skip, from a previous next_offset", 0, 1<<31-1), "output": enum("lines (default) or files", "lines", "files"), "no_ignore": Prop("boolean", "Search ignored paths too")}, "query")}, Run: f.tagged(f.search)})
 }
 func pathOK(p string) error {
 	if p == "" || filepath.IsAbs(p) || !filepath.IsLocal(p) {
-		return errors.New("path must stay inside the workspace")
+		return &ToolError{"outside_project", "path must stay inside the workspace"}
 	}
 	return nil
 }
@@ -208,7 +208,7 @@ func (f *Files) read(ctx context.Context, in Invocation) (Output, error) {
 	br := bufio.NewReaderSize(file, 64*1024)
 	head, _ := br.Peek(8192)
 	if bytes.IndexByte(head, 0) >= 0 {
-		return Output{}, errors.New("binary file: use encoding=base64")
+		return Output{}, &ToolError{"binary_file", "binary file: use encoding=base64"}
 	}
 	start := max(a.Start, 1)
 	end := start + defaultReadLines - 1
@@ -338,7 +338,7 @@ func (f *Files) write(ctx context.Context, in Invocation) (Output, error) {
 		}
 	}
 	if len(b) > MaxFileBytes {
-		return Output{}, errors.New("file exceeds 1 MiB")
+		return Output{}, &ToolError{"too_large", "file exceeds 1 MiB"}
 	}
 	mode := os.FileMode(0644)
 	existed := false
@@ -346,10 +346,10 @@ func (f *Files) write(ctx context.Context, in Invocation) (Output, error) {
 		existed = true
 		mode = info.Mode().Perm()
 		if a.CreateOnly {
-			return Output{}, errors.New("file already exists (create_only)")
+			return Output{}, &ToolError{"file_exists", "file already exists (create_only)"}
 		}
 		if info.IsDir() {
-			return Output{}, errors.New("path is a directory")
+			return Output{}, &ToolError{"is_directory", "path is a directory"}
 		}
 	}
 	if err := writeAtomic(ctx, root, a.Path, b, mode); err != nil {
@@ -398,10 +398,10 @@ func (f *Files) edit(ctx context.Context, in Invocation) (Output, error) {
 		return Output{}, err
 	}
 	if len(b) > MaxFileBytes {
-		return Output{}, errors.New("file exceeds 1 MiB; edit_file cannot change it")
+		return Output{}, &ToolError{"too_large", "file exceeds 1 MiB; edit_file cannot change it"}
 	}
 	if !utf8.Valid(b) || bytes.IndexByte(b, 0) >= 0 {
-		return Output{}, errors.New("binary or non-UTF-8 file cannot be edited as text")
+		return Output{}, &ToolError{"binary_file", "binary or non-UTF-8 file cannot be edited as text"}
 	}
 	src, oldText, newText := string(b), a.Old, a.New
 	count := strings.Count(src, oldText)
@@ -417,7 +417,7 @@ func (f *Files) edit(ctx context.Context, in Invocation) (Output, error) {
 		if trimmed := strings.TrimSpace(oldText); trimmed != "" && strings.Contains(src, trimmed) {
 			msg += " (the text exists but whitespace or indentation differs)"
 		}
-		return Output{}, errors.New(msg)
+		return Output{}, &ToolError{"no_match", msg}
 	}
 	first := strings.Index(src, oldText)
 	if count > 1 && !a.ReplaceAll {
@@ -430,7 +430,7 @@ func (f *Files) edit(ctx context.Context, in Invocation) (Output, error) {
 			lines = append(lines, fmt.Sprint(strings.Count(src[:from+i], "\n")+1))
 			from += i + len(oldText)
 		}
-		return Output{}, fmt.Errorf("old_string matches %d times (lines %s); add surrounding context to make it unique or set replace_all=true", count, strings.Join(lines, ", "))
+		return Output{}, &ToolError{"ambiguous_match", fmt.Sprintf("old_string matches %d times (lines %s); add surrounding context to make it unique or set replace_all=true", count, strings.Join(lines, ", "))}
 	}
 	limit := 1
 	if a.ReplaceAll {
@@ -438,7 +438,7 @@ func (f *Files) edit(ctx context.Context, in Invocation) (Output, error) {
 	}
 	out := strings.Replace(src, oldText, newText, limit)
 	if len(out) > MaxFileBytes {
-		return Output{}, errors.New("result exceeds 1 MiB")
+		return Output{}, &ToolError{"too_large", "result exceeds 1 MiB"}
 	}
 	if err := writeAtomic(ctx, root, path, []byte(out), info.Mode().Perm()); err != nil {
 		return Output{}, err

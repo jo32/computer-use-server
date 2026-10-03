@@ -98,6 +98,12 @@ func New(workspace, dataDir string) (*App, error) {
 	files.Register(registry)
 	processes.Register(registry)
 	c.Register(registry)
+	registry.PermissionCheck = func(spec harness.Spec) string {
+		if spec.Category == "computer" {
+			return c.Missing(spec.Name)
+		}
+		return ""
+	}
 	registry.OnPause = processes.Stop
 	chrome := chromemcp.New(registry)
 	sharing := tunnel.New(tunnel.Options{Dir: filepath.Join(dataDir, "cloudflared"), Changed: registry.Signal, RedactSecrets: registry.AddSecrets})
