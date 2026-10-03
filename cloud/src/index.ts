@@ -195,6 +195,8 @@ export default {
     let response: Response
     try { response = await route(req, env) } catch (e) { response = e instanceof HTTPError ? json({ error: e.message }, e.status) : json({ error: '服务暂时不可用，请重试' }, 500) }
     const headers = new Headers(response.headers)
+    // ReadyRig installs its own beacon; prevent the zone from injecting a second one.
+    if (headers.get('Content-Type')?.includes('text/html')) headers.set('Cache-Control', [headers.get('Cache-Control'), 'no-transform'].filter(Boolean).join(', '))
     headers.set('X-Content-Type-Options', 'nosniff')
     if (!headers.has('Referrer-Policy')) headers.set('Referrer-Policy', 'no-referrer')
     headers.set('X-Frame-Options', 'DENY')

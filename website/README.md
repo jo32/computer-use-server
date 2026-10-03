@@ -67,6 +67,21 @@ Replacing the app icon requires no React component changes. Commit generated ass
 
 The product is named **ReadyRig**, and the package is `readyrig-website`. Theme preferences use `readyrig-site-theme`, with the former `readrig-site-theme` key as a fallback to preserve existing preferences.
 
+## Web analytics
+
+Cloudflare Web Analytics tracks the production homepage, `/intro`, and `/console`.
+The beacon is loaded by `src/main.tsx` only on `readyrig.getmegaportal.com` in
+production builds. Local development, previews on other hosts, and OAuth pages
+do not load it. The site token is a public beacon identifier, not an API secret.
+
+View reports in the Cloudflare account under **Observability → Analytics → Web
+analytics → readyrig.getmegaportal.com**. The site uses manual snippet installation;
+do not also enable automatic injection for this hostname, which could double-count
+page views. The ReadyRig Worker sets `Cache-Control: no-transform` on HTML responses
+to prevent the parent zone's automatic beacon from being injected alongside ours.
+Reports cover traffic and web performance, not downloads completed,
+desktop tool calls, or task completion and retention. No desktop telemetry was added.
+
 ## Content and appearance
 
 - `src/App.tsx`: introduction, features, getting started, FAQ, downloads, and footer.
