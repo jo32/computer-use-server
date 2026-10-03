@@ -11,6 +11,14 @@ package computer
 #include <stdio.h>
 static int screenAllowed(){return CGPreflightScreenCaptureAccess();}
 static int inputAllowed(){return AXIsProcessTrusted();}
+// Requesting, not just checking, is what makes macOS list this app in
+// Privacy & Security; a bare preflight never registers it.
+static void requestScreen(){CGRequestScreenCaptureAccess();}
+static void requestInput(){
+  const void *k[]={kAXTrustedCheckOptionPrompt}; const void *v[]={kCFBooleanTrue};
+  CFDictionaryRef o=CFDictionaryCreate(NULL,k,v,1,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
+  AXIsProcessTrustedWithOptions(o); CFRelease(o);
+}
 static double displayW(){return CGDisplayBounds(CGMainDisplayID()).size.width;}
 static double displayH(){return CGDisplayBounds(CGMainDisplayID()).size.height;}
 static int corner(){CGEventRef e=CGEventCreate(NULL); if(!e)return 0; CGPoint p=CGEventGetLocation(e);CFRelease(e);return (p.x<=2 || p.x>=displayW()-2) && (p.y<=2 || p.y>=displayH()-2);}
@@ -135,6 +143,17 @@ var errNeedAccessibility = errors.New("allow this program in macOS System Settin
 
 func (nativeDriver) Permissions() Permissions {
 	return Permissions{true, C.screenAllowed() != 0, C.inputAllowed() != 0, "macOS"}
+}
+
+// Request asks macOS for "screen" or "accessibility" access, which adds this
+// app to the matching System Settings list.
+func (nativeDriver) Request(kind string) {
+	switch kind {
+	case "screen":
+		C.requestScreen()
+	case "accessibility":
+		C.requestInput()
+	}
 }
 func (nativeDriver) Displays() []Bounds {
 	var out []Bounds

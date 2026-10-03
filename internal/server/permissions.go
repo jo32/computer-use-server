@@ -32,6 +32,14 @@ func (s *Server) permissionRoutes(mux *http.ServeMux) {
 			problem(w, http.StatusBadRequest, fmt.Errorf("未知的系统权限类型"))
 			return
 		}
+		if in.Permission == "screen" || in.Permission == "accessibility" {
+			// Without a request macOS never lists the app in the Settings pane.
+			if s.requestPermission != nil {
+				s.requestPermission(in.Permission)
+			} else if s.Computer != nil {
+				s.Computer.RequestPermission(in.Permission)
+			}
+		}
 		opener := s.openSystemSettings
 		if opener == nil {
 			opener = openMacOSSettings

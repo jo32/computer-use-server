@@ -132,6 +132,14 @@ func New(dir string) *Computer {
 }
 func (c *Computer) Permissions() Permissions { return c.driver.Permissions() }
 
+// RequestPermission triggers the system prompt for "screen" or "accessibility"
+// so the app is registered in System Settings. Drivers without prompts ignore it.
+func (c *Computer) RequestPermission(kind string) {
+	if r, ok := c.driver.(interface{ Request(string) }); ok {
+		r.Request(kind)
+	}
+}
+
 // Missing names the macOS permission a tool needs and does not have yet, or
 // returns "" when it can run. Screen Recording is checked when the tool takes
 // the screenshot itself; actions only need Accessibility because they can be

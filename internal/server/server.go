@@ -59,6 +59,7 @@ type Server struct {
 	openLocalPath                             localPathOpener
 	openSystemSettings                        systemSettingsOpener
 }
+	requestPermission                         func(kind string)
 
 // LocalCLI identifies the command and instance to use for local configuration.
 // It contains no connection credentials and is excluded from the public console.

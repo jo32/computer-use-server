@@ -12,14 +12,20 @@ import (
 func TestSystemPermissionSettingsDestinations(t *testing.T) {
 	s := fixture(t)
 	ui := s.UI()
-	for _, tc := range []struct{ body, pane string }{
-		{`{}`, "Privacy_AllFiles"},
-		{`{"permission":"files"}`, "Privacy_AllFiles"},
-		{`{"permission":"screen"}`, "Privacy_ScreenCapture"},
-		{`{"permission":"accessibility"}`, "Privacy_Accessibility"},
+	for _, tc := range []struct{ body, pane, requested string }{
+		{`{}`, "Privacy_AllFiles", ""},
+		{`{"permission":"files"}`, "Privacy_AllFiles", ""},
+		{`{"permission":"screen"}`, "Privacy_ScreenCapture", "screen"},
+		{`{"permission":"accessibility"}`, "Privacy_Accessibility", "accessibility"},
 	} {
 		t.Run(tc.pane+tc.body, func(t *testing.T) {
-			var opened string
+			var opened, requested string
+			s.requestPermission = func(kind string) { requested = kind }
+			defer func() {
+				if requested != tc.requested {
+					t.Fatalf("requested %q, want %q", requested, tc.requested)
+				}
+			}()
 			s.openSystemSettings = func(ctx context.Context, url string) error {
 				opened = url
 				return ctx.Err()
@@ -33,6 +39,7 @@ func TestSystemPermissionSettingsDestinations(t *testing.T) {
 			}
 		})
 	}
+	s.requestPermission = func(string) {}
 	for _, tc := range []struct {
 		err    error
 		status int
